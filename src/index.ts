@@ -12,7 +12,7 @@ const ContactSchema = t.Object({
 });
 
 const app = new Elysia()
-  .use(cors({ origin: "http://localhost:5173" }))
+  .use(cors({ origin: /^http:\/\/localhost(?::\d+)?$/ }))
   .get("/", () => "Hello Zehut Yehudit Server!")
   .post(
     "/api/extract",
