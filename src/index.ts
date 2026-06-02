@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { extractContacts } from "./openrouter";
 
 const PORT: number = 4000;
 
@@ -8,11 +9,20 @@ const app = new Elysia()
   .get("/", () => "Hello Elysia")
   .post(
     "/api/extract",
-    ({ body }) => {
+    async ({ body, set }) => {
       const count =
         body.type === "excel" ? body.rows.length : body.text.length;
       console.log(`[extract] type=${body.type}, count=${count}`);
-      return { status: "received", type: body.type, count };
+      try {
+        const contacts = await extractContacts(body);
+        console.log(`[extract] returned ${contacts.length} contacts`);
+        return contacts;
+      } catch (e) {
+        const message = (e as Error).message;
+        console.error(`[extract] llm_failed: ${message}`);
+        set.status = 502;
+        return { error: "llm_failed", message };
+      }
     },
     {
       body: t.Union([
