@@ -1,0 +1,55 @@
+import {
+  index,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
+
+export const persons = pgTable("persons", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  nationalId: text("national_id").unique(),
+  fullname: text("fullname"),
+  sourceFile: text("source_file"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const phones = pgTable(
+  "phones",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    personId: uuid("person_id")
+      .references(() => persons.id, { onDelete: "cascade" })
+      .notNull(),
+    number: text("number").notNull(),
+    raw: text("raw").notNull(),
+  },
+  (t) => ({
+    numberIdx: index("phones_number_idx").on(t.number),
+    uniquePerPerson: uniqueIndex("phones_person_number_uq").on(
+      t.personId,
+      t.number
+    ),
+  })
+);
+
+export const personsRelations = relations(persons, ({ many }) => ({
+  phones: many(phones),
+}));
+
+export const phonesRelations = relations(phones, ({ one }) => ({
+  person: one(persons, {
+    fields: [phones.personId],
+    references: [persons.id],
+  }),
+}));
+
+export type PersonRow = typeof persons.$inferSelect;
+export type PhoneRow = typeof phones.$inferSelect;
