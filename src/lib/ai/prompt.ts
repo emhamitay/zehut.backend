@@ -1,6 +1,7 @@
-import type { ExtractInput } from "./types";
+import type { ExtractInput } from "../types";
 
-const DEFAULT_SYSTEM_PROMPT = `You extract contact records from messy spreadsheet rows or raw document text.
+const DEFAULT_SYSTEM_PROMPT = 
+`You extract contact records from messy spreadsheet rows or raw document text.
 
 Output MUST be a single JSON object of shape {"contacts": Contact[]}, where each Contact is:
   { "id": string | null, "fullname": string | null, "phone": string[] }

@@ -1,5 +1,5 @@
-import type { Contact, ExtractInput } from "./types";
-import { SYSTEM_PROMPT, buildUserMessage } from "./prompt";
+import type { Contact, ExtractInput } from "../lib/types";
+import { SYSTEM_PROMPT, buildUserMessage } from "./ai/prompt";
 
 const API_KEY = Bun.env.OPENROUTER_API_KEY;
 const MODEL = Bun.env.OPENROUTER_MODEL;

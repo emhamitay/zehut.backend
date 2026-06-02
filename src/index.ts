@@ -1,29 +1,39 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { extractContacts } from "./openrouter";
+import { extractContacts } from "./lib/openrouter";
 
 const PORT: number = 4000;
 
 const app = new Elysia()
   .use(cors({ origin: "http://localhost:5173" }))
-  .get("/", () => "Hello Elysia")
+  .get("/", () => "Hello Zehut Yehudit Server!")
   .post(
     "/api/extract",
     async ({ body, set }) => {
-      const count =
-        body.type === "excel" ? body.rows.length : body.text.length;
+      // Log the type and count of items being processed
+      const count = body.type === "excel" ? body.rows.length : body.text.length;
       console.log(`[extract] type=${body.type}, count=${count}`);
+
+      // Call the contact extraction function and handle potential errors
       try {
+        // Extract contacts using the provided body and log the number of contacts found
         const contacts = await extractContacts(body);
-        console.log(`[extract] returned ${contacts.length} contacts`);
+        
+        // Log the Contacts found for debugging purposes
+        contacts.forEach((contact, index) => {
+          console.log(`[extract] contact_${index + 1}: ${JSON.stringify(contact)}`);
+        });
+
         return contacts;
       } catch (e) {
+        // Log the error message for debugging purposes
         const message = (e as Error).message;
         console.error(`[extract] llm_failed: ${message}`);
         set.status = 502;
         return { error: "llm_failed", message };
       }
     },
+    // Define the expected body schema for validation
     {
       body: t.Union([
         t.Object({
@@ -35,10 +45,10 @@ const app = new Elysia()
           text: t.String(),
         }),
       ]),
-    }
+    },
   )
   .listen(PORT);
 
 console.log(
-  `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
+  `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`,
 );
