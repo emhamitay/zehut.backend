@@ -15,7 +15,7 @@ Create a `.env` file (or export in your shell):
 OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=...
 # optional — defaults to the local docker postgres
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/zehut
+DATABASE_URL=postgres://postgres:postgres@localhost:5433/zehut
 ```
 
 ## Scripts

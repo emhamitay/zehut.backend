@@ -21,6 +21,8 @@ export type CommitResult = {
   }[];
 };
 
+// Normalize a contact by trimming fields and normalizing phone numbers, returning a structured NormalizedContact
+// -- helper function to prepare incoming contact data for processing (Executed from commitContacts and resolveConflict)
 function normalize(c: Contact): NormalizedContact {
   const phones = (c.phone ?? [])
     .map((raw) => ({ raw, normalized: normalizePhone(raw) }))
@@ -33,12 +35,15 @@ function normalize(c: Contact): NormalizedContact {
   };
 }
 
+// Define the endpoint for committing contacts, including error handling and logging
 export async function commitContacts(
   contacts: Contact[],
   sourceFile: string | null
 ): Promise<CommitResult> {
+  // Initialize the result object to track inserted, merged, and conflicting contacts
   const result: CommitResult = { inserted: [], merged: [], conflicts: [] };
 
+  // Iterate over each raw contact, normalize it, and classify it against existing records to determine if it should be inserted, merged, or flagged as a conflict
   for (const raw of contacts) {
     const c = normalize(raw);
 

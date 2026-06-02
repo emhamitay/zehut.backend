@@ -54,10 +54,12 @@ const app = new Elysia()
       ]),
     },
   )
+  // Define the endpoint for committing contacts, including error handling and logging
   .post(
     "/api/persons/commit",
     async ({ body, set }) => {
       try {
+        // Call the commitContacts function with the provided contacts and source file, and log the results
         const result = await commitContacts(
           body.contacts,
           body.sourceFile ?? null
@@ -80,11 +82,14 @@ const app = new Elysia()
       }),
     }
   )
+  // Define the endpoint for resolving conflicts, including error handling and logging
   .post(
     "/api/persons/resolve",
     async ({ body, set }) => {
       try {
+        // Call the resolveConflict function with the provided body and log the resolved person
         const person = await resolveConflict(body);
+        console.log(`[resolve] resolved_person: ${JSON.stringify(person)}`);
         return { person };
       } catch (e) {
         const message = (e as Error).message;
