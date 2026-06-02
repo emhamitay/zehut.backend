@@ -1,8 +1,15 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { extractContacts } from "./lib/openrouter";
+import { commitContacts, resolveConflict } from "./persons/service";
 
 const PORT: number = 4000;
+
+const ContactSchema = t.Object({
+  id: t.Union([t.String(), t.Null()]),
+  fullname: t.Union([t.String(), t.Null()]),
+  phone: t.Array(t.String()),
+});
 
 const app = new Elysia()
   .use(cors({ origin: "http://localhost:5173" }))
@@ -46,6 +53,63 @@ const app = new Elysia()
         }),
       ]),
     },
+  )
+  .post(
+    "/api/persons/commit",
+    async ({ body, set }) => {
+      try {
+        const result = await commitContacts(
+          body.contacts,
+          body.sourceFile ?? null
+        );
+        console.log(
+          `[commit] inserted=${result.inserted.length} merged=${result.merged.length} conflicts=${result.conflicts.length}`
+        );
+        return result;
+      } catch (e) {
+        const message = (e as Error).message;
+        console.error(`[commit] failed: ${message}`);
+        set.status = 500;
+        return { error: "commit_failed", message };
+      }
+    },
+    {
+      body: t.Object({
+        contacts: t.Array(ContactSchema),
+        sourceFile: t.Optional(t.Union([t.String(), t.Null()])),
+      }),
+    }
+  )
+  .post(
+    "/api/persons/resolve",
+    async ({ body, set }) => {
+      try {
+        const person = await resolveConflict(body);
+        return { person };
+      } catch (e) {
+        const message = (e as Error).message;
+        console.error(`[resolve] failed: ${message}`);
+        set.status = 500;
+        return { error: "resolve_failed", message };
+      }
+    },
+    {
+      body: t.Union([
+        t.Object({
+          action: t.Literal("merge"),
+          targetPersonId: t.String(),
+          incoming: ContactSchema,
+        }),
+        t.Object({
+          action: t.Literal("new"),
+          incoming: ContactSchema,
+          sourceFile: t.Optional(t.Union([t.String(), t.Null()])),
+        }),
+        t.Object({
+          action: t.Literal("skip"),
+        }),
+      ]),
+    }
   )
   .listen(PORT);
 
