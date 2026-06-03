@@ -206,6 +206,61 @@ describe("users routes (protected)", () => {
   });
 });
 
+describe("POST /api/auth/setup", () => {
+  test("creates the first user when no users exist and returns token + user", async () => {
+    const { app, users } = appFor(tdb);
+    expect(await users.count()).toBe(0);
+    const res = await app.handle(
+      new Request("http://localhost/api/auth/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: "admin",
+          password: "super-secret-1",
+        }),
+      })
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      token: string;
+      user: { username: string };
+    };
+    expect(typeof data.token).toBe("string");
+    expect(data.user.username).toBe("admin");
+    expect(await users.count()).toBe(1);
+  });
+
+  test("is forbidden once at least one user exists", async () => {
+    const { app, users } = appFor(tdb);
+    await users.create({ username: "alice", password: "secret-pass-123" });
+    const res = await app.handle(
+      new Request("http://localhost/api/auth/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: "intruder",
+          password: "super-secret-1",
+        }),
+      })
+    );
+    expect(res.status).toBe(403);
+    expect(await users.count()).toBe(1);
+  });
+
+  test("returns 400 on invalid input (short password)", async () => {
+    const { app, users } = appFor(tdb);
+    const res = await app.handle(
+      new Request("http://localhost/api/auth/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: "admin", password: "short" }),
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(await users.count()).toBe(0);
+  });
+});
+
 describe("existing routes are protected", () => {
   test("POST /api/persons/commit returns 401 without token", async () => {
     const { app } = appFor(tdb);

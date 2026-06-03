@@ -21,6 +21,7 @@ const PUBLIC_PATHS = new Set<string>([
   "/",
   "/api/auth/setup-required",
   "/api/auth/login",
+  "/api/auth/setup",
 ]);
 
 function bearerToken(req: Request): string | null {
@@ -56,6 +57,27 @@ export function buildApp(deps: AppDeps) {
       const n = await users.count();
       return { required: n === 0 };
     })
+    .post(
+      "/api/auth/setup",
+      async ({ body, set }) => {
+        const existing = await users.count();
+        if (existing > 0) {
+          set.status = 403;
+          return { error: "setup_already_completed" };
+        }
+        try {
+          const user = await users.create(body);
+          const token = await auth.signToken({ sub: user.id });
+          return { token, user };
+        } catch (e) {
+          set.status = 400;
+          return { error: (e as Error).message };
+        }
+      },
+      {
+        body: t.Object({ username: t.String(), password: t.String() }),
+      }
+    )
     .post(
       "/api/auth/login",
       async ({ body, set }) => {
