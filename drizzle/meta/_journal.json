@@ -15,6 +15,13 @@
       "when": 1780515600923,
       "tag": "0001_bored_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780518357595,
+      "tag": "0002_daffy_celestials",
+      "breakpoints": true
     }
   ]
 }
