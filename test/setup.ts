@@ -1,3 +1,7 @@
+// Set env vars required by transitive imports before any module loads them.
+process.env.OPENROUTER_API_KEY ??= "test-key";
+process.env.OPENROUTER_MODEL ??= "test-model";
+
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { readdirSync, readFileSync } from "node:fs";

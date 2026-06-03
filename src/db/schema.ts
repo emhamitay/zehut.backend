@@ -104,6 +104,16 @@ export const alertsRelations = relations(alerts, ({ one }) => ({
   }),
 }));
 
+export const users = pgTable("users", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  username: text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 export type PersonRow = typeof persons.$inferSelect;
 export type PhoneRow = typeof phones.$inferSelect;
 export type AlertRow = typeof alerts.$inferSelect;
+export type UserRow = typeof users.$inferSelect;

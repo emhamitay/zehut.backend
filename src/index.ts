@@ -1,76 +1,34 @@
-import { Elysia, t } from "elysia";
-import { cors } from "@elysiajs/cors";
-import { extractContacts } from "./lib/openrouter";
-import { commitContacts } from "./persons/service";
-import {
-  CommitInputSchema,
-  CommitResultSchema,
-  ContactSchema,
-  ExtractInputSchema,
-} from "./lib/schemas";
+import { buildApp } from "./app";
+import { makeUserRepo } from "./users/repo";
+import { makeUserService } from "./users/service";
+import { makeAuthService } from "./auth/service";
+import { bootstrapAdmin } from "./auth/bootstrap";
 
 const PORT: number = 4000;
 
-const app = new Elysia()
-  .use(cors({ origin: /^http:\/\/localhost(?::\d+)?$/ }))
-  .get("/", () => "Hello Zehut Yehudit Server!")
-  .post(
-    "/api/extract",
-    async ({ body, set }) => {
-      const count = body.type === "excel" ? body.rows.length : body.text.length;
-      console.log(`[extract] type=${body.type}, count=${count}`);
+const JWT_SECRET = Bun.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.warn(
+    "[auth] JWT_SECRET not set — using insecure dev default. Set JWT_SECRET in your .env for production."
+  );
+}
 
-      try {
-        const contacts = await extractContacts(body);
-        contacts.forEach((contact, index) => {
-          console.log(
-            `[extract] contact_${index + 1}: ${JSON.stringify(contact)}`
-          );
-        });
-        return contacts;
-      } catch (e) {
-        const message = (e as Error).message;
-        console.error(`[extract] llm_failed: ${message}`);
-        set.status = 502;
-        return { error: "llm_failed", message };
-      }
-    },
-    {
-      body: ExtractInputSchema,
-      response: {
-        200: t.Array(ContactSchema),
-        502: t.Object({ error: t.String(), message: t.String() }),
-      },
-    }
-  )
-  .post(
-    "/api/persons/commit",
-    async ({ body, set }) => {
-      try {
-        const result = await commitContacts(
-          body.contacts,
-          body.sourceFile ?? null
-        );
-        console.log(
-          `[commit] inserted=${result.inserted.length} ignored=${result.ignored} phoneAdded=${result.phoneAdded.length} alerts=${result.alerts.length}`
-        );
-        return result;
-      } catch (e) {
-        const message = (e as Error).message;
-        console.error(`[commit] failed: ${message}`);
-        set.status = 500;
-        return { error: "commit_failed", message };
-      }
-    },
-    {
-      body: CommitInputSchema,
-      response: {
-        200: CommitResultSchema,
-        500: t.Object({ error: t.String(), message: t.String() }),
-      },
-    }
-  )
-  .listen(PORT);
+const users = makeUserService(makeUserRepo());
+const auth = makeAuthService({
+  secret: JWT_SECRET ?? "dev-insecure-secret-change-me",
+});
+
+const seeded = await bootstrapAdmin(users, {
+  username: Bun.env.BOOTSTRAP_ADMIN_USERNAME,
+  password: Bun.env.BOOTSTRAP_ADMIN_PASSWORD,
+});
+if (seeded) {
+  console.log(
+    `[auth] seeded admin user "${Bun.env.BOOTSTRAP_ADMIN_USERNAME}" from .env`
+  );
+}
+
+const app = buildApp({ users, auth }).listen(PORT);
 
 console.log(
   `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`

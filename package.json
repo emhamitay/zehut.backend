@@ -13,8 +13,10 @@
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",
+    "@elysiajs/jwt": "^1.4.2",
     "drizzle-orm": "^0.45.2",
     "elysia": "latest",
+    "jose": "^6.2.3",
     "pg": "^8.21.0"
   },
   "devDependencies": {
