@@ -1,28 +1,16 @@
 import type { Contact } from "../lib/types";
-import { classify, type NormalizedContact } from "./match";
+import { decide, type AlertSpec, type NormalizedContact } from "./match";
 import { isValidPhone, normalizePhone } from "./normalize";
-import {
-  addPhonesToPerson,
-  findById,
-  findByNationalId,
-  findByPhoneNumbers,
-  insertPersonWithPhones,
-  updatePersonAndAddPhones,
-  type PersonWithPhones,
-} from "./repo";
+import { repo as defaultRepo, type PersonWithPhones, type Repo } from "./repo";
+import type { AlertRow } from "../db/schema";
 
 export type CommitResult = {
   inserted: PersonWithPhones[];
-  merged: { person: PersonWithPhones; mergedFrom: Contact }[];
-  conflicts: {
-    incoming: Contact;
-    matchedOn: "phone";
-    candidates: PersonWithPhones[];
-  }[];
+  ignored: number;
+  phoneAdded: { person: PersonWithPhones; addedPhones: string[] }[];
+  alerts: AlertRow[];
 };
 
-// Normalize a contact by trimming fields and normalizing phone numbers, returning a structured NormalizedContact
-// -- helper function to prepare incoming contact data for processing (Executed from commitContacts and resolveConflict)
 function normalize(c: Contact): NormalizedContact {
   const phones = (c.phone ?? [])
     .map((raw) => ({ raw, normalized: normalizePhone(raw) }))
@@ -35,84 +23,117 @@ function normalize(c: Contact): NormalizedContact {
   };
 }
 
-// Define the endpoint for committing contacts, including error handling and logging
+async function persistAlerts(
+  repo: Repo,
+  personId: string,
+  specs: AlertSpec[],
+  incoming: Contact,
+  sourceFile: string | null
+): Promise<AlertRow[]> {
+  const out: AlertRow[] = [];
+  for (const spec of specs) {
+    const row = await repo.insertAlert({
+      kind: spec.kind,
+      personId,
+      relatedPersonId: spec.relatedPersonId ?? null,
+      details: { ...spec.details, incoming },
+      sourceFile,
+    });
+    out.push(row);
+  }
+  return out;
+}
+
 export async function commitContacts(
   contacts: Contact[],
-  sourceFile: string | null
+  sourceFile: string | null,
+  repo: Repo = defaultRepo
 ): Promise<CommitResult> {
-  // Initialize the result object to track inserted, merged, and conflicting contacts
-  const result: CommitResult = { inserted: [], merged: [], conflicts: [] };
+  const result: CommitResult = {
+    inserted: [],
+    ignored: 0,
+    phoneAdded: [],
+    alerts: [],
+  };
 
-  // Iterate over each raw contact, normalize it, and classify it against existing records to determine if it should be inserted, merged, or flagged as a conflict
   for (const raw of contacts) {
     const c = normalize(raw);
 
-    const byNationalId = c.nationalId
-      ? await findByNationalId(c.nationalId)
-      : null;
+    const byId = c.nationalId ? await repo.findByNationalId(c.nationalId) : null;
     const byPhone =
       c.phones.length > 0
-        ? await findByPhoneNumbers(c.phones.map((p) => p.normalized))
+        ? await repo.findByPhoneNumbers(c.phones.map((p) => p.normalized))
         : [];
+    const byName = c.fullname ? await repo.findByFullname(c.fullname) : [];
 
-    const decision = classify(c, byNationalId, byPhone);
+    // Build a normalized lookup for each candidate's stored raw phones.
+    // The repo returns phones as raw strings; we re-normalize for comparison.
+    const phoneNormalizedByRaw = new Map<string, string>();
+    for (const candidate of [byId, ...byPhone, ...byName]) {
+      if (!candidate) continue;
+      for (const rawPhone of candidate.phones) {
+        phoneNormalizedByRaw.set(rawPhone, normalizePhone(rawPhone));
+      }
+    }
+
+    const decision = decide(c, byId, byPhone, byName, phoneNormalizedByRaw);
+
+    if (decision.kind === "noop") {
+      result.ignored += 1;
+      continue;
+    }
 
     if (decision.kind === "insert") {
-      const person = await insertPersonWithPhones({
+      const person = await repo.insertPersonWithPhones({
         nationalId: c.nationalId,
         fullname: c.fullname,
         sourceFile,
         phones: c.phones,
       });
       result.inserted.push(person);
-    } else if (decision.kind === "merge") {
-      const newPhones = c.phones.filter(
-        (p) => !decision.target.phones.some((existing) => existing === p.raw)
+      const alertRows = await persistAlerts(
+        repo,
+        person.id,
+        decision.alerts,
+        raw,
+        sourceFile
       );
-      const person = await addPhonesToPerson(decision.target.id, newPhones);
-      result.merged.push({ person, mergedFrom: raw });
-    } else {
-      result.conflicts.push({
-        incoming: raw,
-        matchedOn: decision.matchedOn,
-        candidates: decision.candidates,
-      });
+      result.alerts.push(...alertRows);
+      continue;
     }
+
+    if (decision.kind === "add_phones") {
+      const { person, addedPhones } = await repo.addPhonesToPerson(
+        decision.person.id,
+        c.phones
+      );
+      if (addedPhones.length > 0) {
+        result.phoneAdded.push({ person, addedPhones });
+      } else if (decision.alerts.length === 0) {
+        result.ignored += 1;
+      }
+      const alertRows = await persistAlerts(
+        repo,
+        person.id,
+        decision.alerts,
+        raw,
+        sourceFile
+      );
+      result.alerts.push(...alertRows);
+      continue;
+    }
+
+    // alert_only
+    const alertRows = await persistAlerts(
+      repo,
+      decision.person.id,
+      decision.alerts,
+      raw,
+      sourceFile
+    );
+    result.alerts.push(...alertRows);
+    result.ignored += 1;
   }
 
   return result;
-}
-
-export type ResolveAction =
-  | { action: "merge"; targetPersonId: string; incoming: Contact }
-  | { action: "new"; incoming: Contact; sourceFile?: string | null }
-  | { action: "skip" };
-
-export async function resolveConflict(
-  input: ResolveAction
-): Promise<PersonWithPhones | null> {
-  if (input.action === "skip") return null;
-
-  if (input.action === "new") {
-    const c = normalize(input.incoming);
-    return insertPersonWithPhones({
-      nationalId: c.nationalId,
-      fullname: c.fullname,
-      sourceFile: input.sourceFile ?? null,
-      phones: c.phones,
-    });
-  }
-
-  const c = normalize(input.incoming);
-  const target = await findById(input.targetPersonId);
-  if (!target) throw new Error("target_person_not_found");
-
-  const patch: { fullname?: string | null; nationalId?: string | null } = {};
-  if (c.fullname && c.fullname !== target.fullname) patch.fullname = c.fullname;
-  if (c.nationalId && !target.nationalId) patch.nationalId = c.nationalId;
-
-  const newPhones = c.phones.filter(
-    (p) => !target.phones.some((existing) => existing === p.raw)
-  );
-  return updatePersonAndAddPhones(input.targetPersonId, patch, newPhones);
 }
