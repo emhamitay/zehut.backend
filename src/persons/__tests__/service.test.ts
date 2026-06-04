@@ -143,6 +143,100 @@ describe("commitContacts", () => {
     expect(await tdb.db.select().from(persons)).toHaveLength(2);
   });
 
+  test("null id on incoming, name+phone match an existing person -> noop, no alert", async () => {
+    await seed(contact({ id: "111", fullname: "Alice", phone: ["0500000000"] }));
+    const repo = makeRepo(tdb.db);
+    const result = await commitContacts(
+      [{ id: null as any, fullname: "Alice", phone: ["0500000000"] }],
+      "file.xlsx",
+      repo
+    );
+    expect(result.inserted).toHaveLength(0);
+    expect(result.phoneAdded).toHaveLength(0);
+    expect(result.ignored).toBe(1);
+    expect(result.alerts).toHaveLength(0);
+  });
+
+  test("homonyms with no ids -> insert + name_match_no_id warning", async () => {
+    await seed({ id: null as any, fullname: "Alice", phone: ["0500000000"] });
+    const repo = makeRepo(tdb.db);
+    const result = await commitContacts(
+      [{ id: null as any, fullname: "Alice", phone: ["0511111111"] }],
+      "file.xlsx",
+      repo
+    );
+    expect(result.inserted).toHaveLength(1);
+    expect(result.alerts).toHaveLength(1);
+    expect(result.alerts[0].kind).toBe("name_match_no_id");
+    expect(await tdb.db.select().from(persons)).toHaveLength(2);
+  });
+
+  test("homonyms with no ids, partial phone overlap -> merge, no alert", async () => {
+    await seed({ id: null as any, fullname: "Alice", phone: ["0500000000"] });
+    const repo = makeRepo(tdb.db);
+    const result = await commitContacts(
+      [
+        {
+          id: null as any,
+          fullname: "Alice",
+          phone: ["0500000000", "0511111111"],
+        },
+      ],
+      "file.xlsx",
+      repo
+    );
+    expect(result.inserted).toHaveLength(0);
+    expect(result.phoneAdded).toHaveLength(1);
+    expect(result.phoneAdded[0].addedPhones).toEqual(["0511111111"]);
+    expect(result.alerts).toHaveLength(0);
+    expect(await tdb.db.select().from(persons)).toHaveLength(1);
+  });
+
+  test("incoming has id, existing has null id, name+phone match -> backfill id", async () => {
+    await seed({ id: null as any, fullname: "Alice", phone: ["0500000000"] });
+    const repo = makeRepo(tdb.db);
+    const result = await commitContacts(
+      [contact({ id: "111", fullname: "Alice", phone: ["0500000000"] })],
+      "file.xlsx",
+      repo
+    );
+    expect(result.inserted).toHaveLength(0);
+    expect(result.alerts).toHaveLength(0);
+    const allPersons = await tdb.db.select().from(persons);
+    expect(allPersons).toHaveLength(1);
+    expect(allPersons[0].nationalId).toBe("111");
+  });
+
+  test("phone-only match, both names present and differ, no ids -> insert + phone_match_name_differs_no_id", async () => {
+    await seed({ id: null as any, fullname: "Alice", phone: ["0500000000"] });
+    const repo = makeRepo(tdb.db);
+    const result = await commitContacts(
+      [{ id: null as any, fullname: "Bob", phone: ["0500000000"] }],
+      "file.xlsx",
+      repo
+    );
+    expect(result.inserted).toHaveLength(1);
+    expect(result.alerts).toHaveLength(1);
+    expect(result.alerts[0].kind).toBe("phone_match_name_differs_no_id");
+    expect(await tdb.db.select().from(persons)).toHaveLength(2);
+  });
+
+  test("intra-batch: two rows same name, no ids, different phones -> 2 persons + warning", async () => {
+    const repo = makeRepo(tdb.db);
+    const result = await commitContacts(
+      [
+        { id: null as any, fullname: "Alice", phone: ["0500000000"] },
+        { id: null as any, fullname: "Alice", phone: ["0511111111"] },
+      ],
+      "file.xlsx",
+      repo
+    );
+    expect(result.inserted).toHaveLength(2);
+    expect(result.alerts).toHaveLength(1);
+    expect(result.alerts[0].kind).toBe("name_match_no_id");
+    expect(await tdb.db.select().from(persons)).toHaveLength(2);
+  });
+
   test("alerts row written to alerts table", async () => {
     await seed(contact({ id: "999", fullname: "Alice", phone: ["0500000000"] }));
     const repo = makeRepo(tdb.db);

@@ -25,6 +25,12 @@ export type Decision =
       person: PersonWithPhones;
       alerts: AlertSpec[];
     }
+  | {
+      kind: "backfill_id_and_add_phones";
+      person: PersonWithPhones;
+      nationalId: string;
+      alerts: AlertSpec[];
+    }
   | { kind: "insert"; alerts: AlertSpec[] }
   | {
       kind: "alert_only";
@@ -32,9 +38,13 @@ export type Decision =
       alerts: AlertSpec[];
     };
 
-function sameName(a: string | null, b: string | null): boolean {
-  if (!a || !b) return false;
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+// Tri-state field comparison: a missing value (null/empty) is "unknown",
+// not a mismatch. Two non-null values are "match" or "mismatch".
+type FieldCmp = "match" | "mismatch" | "unknown";
+
+function cmpField(a: string | null, b: string | null): FieldCmp {
+  if (!a || !b) return "unknown";
+  return a.trim().toLowerCase() === b.trim().toLowerCase() ? "match" : "mismatch";
 }
 
 function phoneOverlap(
@@ -62,7 +72,7 @@ export function decide(
 
   // Case: id matches an existing person
   if (byId) {
-    const nameM = sameName(byId.fullname, incoming.fullname);
+    const nameCmp = cmpField(byId.fullname, incoming.fullname);
     const phoneM = phoneOverlap(byId, incomingNormalized, phoneNormalizedByRaw);
 
     // Cross-person alert: a different person owns one of the incoming phones
@@ -77,100 +87,143 @@ export function decide(
       }
     }
 
-    if (nameM && phoneM) {
-      // Exact match — but incoming might still bring NEW phones
-      const hasNewPhones = incomingNormalized.some(
-        (n) =>
-          !byId.phones
-            .map((raw) => phoneNormalizedByRaw.get(raw) ?? raw)
-            .includes(n)
-      );
-      if (hasNewPhones || crossPersonAlerts.length > 0) {
+    const existingNumbers = byId.phones.map(
+      (raw) => phoneNormalizedByRaw.get(raw) ?? raw
+    );
+    const hasNewPhones = incomingNormalized.some(
+      (n) => !existingNumbers.includes(n)
+    );
+
+    // Only a populated-on-both-sides difference counts as a name conflict.
+    if (nameCmp === "mismatch") {
+      if (phoneM && !hasNewPhones) {
+        // id+phone match, name differs, no new phones -> alert_only
         return {
-          kind: "add_phones",
+          kind: "alert_only",
           person: byId,
-          alerts: crossPersonAlerts,
+          alerts: [
+            {
+              kind: "name_mismatch_on_id",
+              details: { matchedOn: "id", mismatchedFields: ["name"] },
+            },
+            ...crossPersonAlerts,
+          ],
         };
       }
-      return { kind: "noop", person: byId };
+      // name conflict + (phone overlaps with new phones OR no phone overlap)
+      const kind: AlertKind = phoneM
+        ? "name_mismatch_on_id"
+        : "name_phone_mismatch_on_id";
+      const mismatchedFields: MismatchedField[] = phoneM
+        ? ["name"]
+        : ["name", "phone"];
+      return {
+        kind: "add_phones",
+        person: byId,
+        alerts: [
+          { kind, details: { matchedOn: "id", mismatchedFields } },
+          ...crossPersonAlerts,
+        ],
+      };
     }
 
-    if (nameM && !phoneM) {
-      // case 7: id+name match, phone differs -> add the new phone
+    // No name conflict (match or unknown). Merge: add new phones if any.
+    if (hasNewPhones || crossPersonAlerts.length > 0) {
       return {
         kind: "add_phones",
         person: byId,
         alerts: crossPersonAlerts,
       };
     }
-
-    if (!nameM && phoneM) {
-      // case 4: id+phone match, name differs -> alert, no insert
-      return {
-        kind: "alert_only",
-        person: byId,
-        alerts: [
-          {
-            kind: "name_mismatch_on_id",
-            details: { matchedOn: "id", mismatchedFields: ["name"] },
-          },
-          ...crossPersonAlerts,
-        ],
-      };
-    }
-
-    // case 6: id matches, name AND phone differ -> add phones to existing + alert
-    return {
-      kind: "add_phones",
-      person: byId,
-      alerts: [
-        {
-          kind: "name_phone_mismatch_on_id",
-          details: {
-            matchedOn: "id",
-            mismatchedFields: ["name", "phone"],
-          },
-        },
-        ...crossPersonAlerts,
-      ],
-    };
+    return { kind: "noop", person: byId };
   }
 
   // No id match. Try phone next.
   if (byPhone.length > 0) {
     const phonePerson = byPhone[0];
-    const nameM = sameName(phonePerson.fullname, incoming.fullname);
+    const nameCmp = cmpField(phonePerson.fullname, incoming.fullname);
+    const idCmp = cmpField(phonePerson.nationalId, incoming.nationalId);
 
-    if (nameM) {
-      // case 1: phone+name match, id differs -> insert new person + alert
+    // IDs both present and differ -> definitively different people.
+    if (idCmp === "mismatch") {
+      if (nameCmp === "match") {
+        // case 1: phone+name match, id differs -> insert new + alert
+        return {
+          kind: "insert",
+          alerts: [
+            {
+              kind: "id_mismatch_name_phone_match",
+              relatedPersonId: phonePerson.id,
+              details: { matchedOn: "phone", mismatchedFields: ["id"] },
+            },
+          ],
+        };
+      }
+      // cases 2/5: phone matches, id differs, name differs or unknown
+      const mismatchedFields: MismatchedField[] =
+        nameCmp === "mismatch" ? ["id", "name"] : ["id"];
       return {
         kind: "insert",
         alerts: [
           {
-            kind: "id_mismatch_name_phone_match",
+            kind: "id_name_mismatch_on_phone",
             relatedPersonId: phonePerson.id,
-            details: { matchedOn: "phone", mismatchedFields: ["id"] },
+            details: { matchedOn: "phone", mismatchedFields },
           },
         ],
       };
     }
 
-    // cases 2/5: phone matches, id AND name differ -> insert new + alert
+    // IDs don't conflict (unknown: at least one null, or match — won't reach here on match).
+    if (nameCmp === "mismatch") {
+      // Phone match, names both present and differ, no id conflict.
+      // Can't confirm same person -> insert separate + warning.
+      return {
+        kind: "insert",
+        alerts: [
+          {
+            kind: "phone_match_name_differs_no_id",
+            relatedPersonId: phonePerson.id,
+            details: { matchedOn: "phone", mismatchedFields: ["name"] },
+          },
+        ],
+      };
+    }
+
+    // Phone matches, names match or unknown, no id conflict -> merge.
+    if (!phonePerson.nationalId && incoming.nationalId) {
+      // Existing has no id, incoming brings one -> backfill.
+      return {
+        kind: "backfill_id_and_add_phones",
+        person: phonePerson,
+        nationalId: incoming.nationalId,
+        alerts: [],
+      };
+    }
+    return { kind: "add_phones", person: phonePerson, alerts: [] };
+  }
+
+  // No id match, no phone match. Name-only match means we can't confirm
+  // whether this is the same person or a homonym -- unless both sides have
+  // IDs that differ, which proves they are distinct.
+  if (byName.length > 0) {
+    const namePerson = byName[0];
+    const idCmp = cmpField(namePerson.nationalId, incoming.nationalId);
+    if (idCmp === "mismatch") {
+      // Both have IDs and they differ -> definitively two different people.
+      return { kind: "insert", alerts: [] };
+    }
+    // At least one side has no ID -> warn for human review.
     return {
       kind: "insert",
       alerts: [
         {
-          kind: "id_name_mismatch_on_phone",
-          relatedPersonId: phonePerson.id,
-          details: { matchedOn: "phone", mismatchedFields: ["id", "name"] },
+          kind: "name_match_no_id",
+          relatedPersonId: namePerson.id,
+          details: { matchedOn: "name", mismatchedFields: [] },
         },
       ],
     };
-  }
-
-  // No id, no phone match. Name match alone means two homonyms — insert, no alert.
-  if (byName.length > 0) {
-    return { kind: "insert", alerts: [] };
   }
 
   // Clean new contact

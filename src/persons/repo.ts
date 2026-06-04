@@ -168,6 +168,27 @@ export function makeRepo(database: Database = defaultDb) {
     });
   }
 
+  async function updatePersonNationalId(
+    personId: string,
+    nationalId: string
+  ): Promise<PersonWithPhones> {
+    return database.transaction(async (tx) => {
+      await tx
+        .update(persons)
+        .set({ nationalId, updatedAt: new Date() })
+        .where(eq(persons.id, personId));
+      const [person] = await tx
+        .select()
+        .from(persons)
+        .where(eq(persons.id, personId));
+      const phoneRows = await tx
+        .select()
+        .from(phones)
+        .where(eq(phones.personId, personId));
+      return { ...person, phones: phoneRows.map((p) => p.raw) };
+    });
+  }
+
   async function insertAlert(input: InsertAlertInput): Promise<AlertRow> {
     const [row] = await database
       .insert(alerts)
@@ -189,6 +210,7 @@ export function makeRepo(database: Database = defaultDb) {
     findById,
     insertPersonWithPhones,
     addPhonesToPerson,
+    updatePersonNationalId,
     insertAlert,
   };
 }
