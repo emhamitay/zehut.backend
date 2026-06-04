@@ -74,3 +74,8 @@ export const CommitInputSchema = t.Object({
   contacts: t.Array(ContactSchema),
   sourceFile: t.Optional(t.Union([t.String(), t.Null()])),
 });
+
+export const CredentialsSchema = t.Object({
+  username: t.String(),
+  password: t.String(),
+});
