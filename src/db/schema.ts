@@ -54,6 +54,8 @@ export const ALERT_KINDS = [
   "id_mismatch_name_phone_match",
   "id_name_mismatch_on_phone",
   "cross_person_mismatch",
+  "name_match_no_id",
+  "phone_match_name_differs_no_id",
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 

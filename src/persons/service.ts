@@ -123,6 +123,31 @@ export async function commitContacts(
       continue;
     }
 
+    if (decision.kind === "backfill_id_and_add_phones") {
+      await repo.updatePersonNationalId(
+        decision.person.id,
+        decision.nationalId
+      );
+      const { person, addedPhones } = await repo.addPhonesToPerson(
+        decision.person.id,
+        c.phones
+      );
+      if (addedPhones.length > 0) {
+        result.phoneAdded.push({ person, addedPhones });
+      } else if (decision.alerts.length === 0) {
+        result.ignored += 1;
+      }
+      const alertRows = await persistAlerts(
+        repo,
+        person.id,
+        decision.alerts,
+        raw,
+        sourceFile
+      );
+      result.alerts.push(...alertRows);
+      continue;
+    }
+
     // alert_only
     const alertRows = await persistAlerts(
       repo,
