@@ -1,5 +1,6 @@
 import {
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -115,7 +116,77 @@ export const users = pgTable("users", {
     .notNull(),
 });
 
+export const contactPages = pgTable(
+  "contact_pages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    season: text("season").notNull(),
+    createdByUserId: uuid("created_by_user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    pageNumber: integer("page_number").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    userCreatedAtIdx: index("contact_pages_user_created_at_idx").on(
+      t.createdByUserId,
+      t.createdAt
+    ),
+    seasonNumberIdx: uniqueIndex("contact_pages_season_number_uq").on(
+      t.season,
+      t.pageNumber
+    ),
+  })
+);
+
+export const contactPageEntries = pgTable(
+  "contact_page_entries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    contactPageId: uuid("contact_page_id")
+      .references(() => contactPages.id, { onDelete: "cascade" })
+      .notNull(),
+    personId: uuid("person_id")
+      .references(() => persons.id, { onDelete: "cascade" })
+      .notNull(),
+    season: text("season").notNull(),
+  },
+  (t) => ({
+    pageIdx: index("contact_page_entries_page_idx").on(t.contactPageId),
+    seasonPersonUq: uniqueIndex("contact_page_entries_season_person_uq").on(
+      t.season,
+      t.personId
+    ),
+  })
+);
+
+export const contactPagesRelations = relations(contactPages, ({ many, one }) => ({
+  entries: many(contactPageEntries),
+  createdBy: one(users, {
+    fields: [contactPages.createdByUserId],
+    references: [users.id],
+  }),
+}));
+
+export const contactPageEntriesRelations = relations(
+  contactPageEntries,
+  ({ one }) => ({
+    page: one(contactPages, {
+      fields: [contactPageEntries.contactPageId],
+      references: [contactPages.id],
+    }),
+    person: one(persons, {
+      fields: [contactPageEntries.personId],
+      references: [persons.id],
+    }),
+  })
+);
+
 export type PersonRow = typeof persons.$inferSelect;
 export type PhoneRow = typeof phones.$inferSelect;
 export type AlertRow = typeof alerts.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
+export type ContactPageRow = typeof contactPages.$inferSelect;
+export type ContactPageEntryRow = typeof contactPageEntries.$inferSelect;
