@@ -29,6 +29,13 @@
       "when": 1780607271537,
       "tag": "0003_sticky_tag",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780778928976,
+      "tag": "0004_strong_ricochet",
+      "breakpoints": true
     }
   ]
 }

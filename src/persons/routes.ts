@@ -1,8 +1,28 @@
 import { Elysia, t } from "elysia";
 import { commitContacts } from "./service";
-import { CommitInputSchema, CommitResultSchema } from "../lib/schemas";
+import { updatePerson } from "./update";
+import { mergePersons } from "./merge";
+import { searchPersons, type SearchBy } from "./search";
+import { getPersonHistory } from "./history";
+import { repo } from "./repo";
+import {
+  CommitInputSchema,
+  CommitResultSchema,
+  MergePersonsInputSchema,
+  PersonDetailSchema,
+  PersonHistoryEntrySchema,
+  SearchResultSchema,
+  UpdatePersonInputSchema,
+} from "../lib/schemas";
 import type { AuthService } from "../auth/service";
-import { requireAuth } from "../auth/guard";
+import { currentUserIdFromRequest, requireAuth } from "../auth/guard";
+
+const SEARCH_BY_VALUES: ReadonlyArray<SearchBy> = [
+  "auto",
+  "id",
+  "phone",
+  "name",
+];
 
 export function personsRoutes(auth: AuthService) {
   return new Elysia({ prefix: "/api/persons" })
@@ -30,6 +50,131 @@ export function personsRoutes(auth: AuthService) {
           401: t.Object({ error: t.String() }),
           500: t.Object({ error: t.String(), message: t.String() }),
         },
+      }
+    )
+    .get(
+      "/search",
+      async ({ query, request, set }) => {
+        const userId = await currentUserIdFromRequest(auth, request);
+        if (!userId) {
+          set.status = 401;
+          return { error: "unauthorized" };
+        }
+        const by = (query.by && SEARCH_BY_VALUES.includes(query.by as SearchBy)
+          ? (query.by as SearchBy)
+          : "auto");
+        const myPagesOnly = query.myPagesOnly !== "false";
+        const limit = query.limit ? Number(query.limit) : undefined;
+        return searchPersons({
+          query: query.q ?? "",
+          by,
+          currentUserId: userId,
+          myPagesOnly,
+          limit: Number.isFinite(limit) ? limit : undefined,
+        });
+      },
+      {
+        query: t.Object({
+          q: t.String(),
+          by: t.Optional(t.String()),
+          myPagesOnly: t.Optional(t.String()),
+          limit: t.Optional(t.String()),
+        }),
+        response: {
+          200: SearchResultSchema,
+          401: t.Object({ error: t.String() }),
+        },
+      }
+    )
+    .get(
+      "/:id",
+      async ({ params, set }) => {
+        const person = await repo.findById(params.id);
+        if (!person) {
+          set.status = 404;
+          return { error: "not_found" };
+        }
+        const openAlerts = await repo.listOpenAlerts(person.id);
+        return { person, openAlerts };
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: PersonDetailSchema,
+          401: t.Object({ error: t.String() }),
+          404: t.Object({ error: t.String() }),
+        },
+      }
+    )
+    .get(
+      "/:id/history",
+      async ({ params }) => {
+        return getPersonHistory(params.id);
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: t.Array(PersonHistoryEntrySchema),
+          401: t.Object({ error: t.String() }),
+        },
+      }
+    )
+    .patch(
+      "/:id",
+      async ({ params, body, request, set }) => {
+        const userId = await currentUserIdFromRequest(auth, request);
+        if (!userId) {
+          set.status = 401;
+          return { error: "unauthorized" };
+        }
+        const result = await updatePerson(
+          {
+            personId: params.id,
+            ...(body.nationalId !== undefined
+              ? { nationalId: body.nationalId }
+              : {}),
+            ...(body.fullname !== undefined ? { fullname: body.fullname } : {}),
+            ...(body.phones !== undefined ? { phones: body.phones } : {}),
+            ...(body.reason !== undefined ? { reason: body.reason } : {}),
+          },
+          userId
+        );
+        if (!result.ok) {
+          if ("notFound" in result) {
+            set.status = 404;
+            return { error: "not_found" };
+          }
+          set.status = 409;
+          return { ok: false, conflicts: result.conflicts };
+        }
+        return result;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: UpdatePersonInputSchema,
+      }
+    )
+    .post(
+      "/merge",
+      async ({ body, request, set }) => {
+        const userId = await currentUserIdFromRequest(auth, request);
+        if (!userId) {
+          set.status = 401;
+          return { error: "unauthorized" };
+        }
+        const result = await mergePersons(body, userId);
+        if (!result.ok) {
+          if (result.error === "not_found") {
+            set.status = 404;
+            return { error: "not_found" };
+          }
+          set.status = 409;
+          return result;
+        }
+        return result;
+      },
+      {
+        body: MergePersonsInputSchema,
       }
     );
 }

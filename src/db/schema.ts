@@ -74,6 +74,9 @@ export const alerts = pgTable(
     details: jsonb("details").$type<AlertDetails>().notNull(),
     sourceFile: text("source_file"),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedByUserId: uuid("resolved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -81,6 +84,41 @@ export const alerts = pgTable(
   (t) => ({
     personIdx: index("alerts_person_idx").on(t.personId),
     unresolvedIdx: index("alerts_unresolved_idx").on(t.resolvedAt),
+  })
+);
+
+export const PERSON_AUDIT_FIELDS = [
+  "nationalId",
+  "fullname",
+  "phone_added",
+  "phone_removed",
+  "merged_from",
+] as const;
+export type PersonAuditField = (typeof PERSON_AUDIT_FIELDS)[number];
+
+export const personAudit = pgTable(
+  "person_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    personId: uuid("person_id")
+      .references(() => persons.id, { onDelete: "cascade" })
+      .notNull(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    field: text("field").$type<PersonAuditField>().notNull(),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    personCreatedAtIdx: index("person_audit_person_created_at_idx").on(
+      t.personId,
+      t.createdAt
+    ),
   })
 );
 
@@ -190,3 +228,4 @@ export type AlertRow = typeof alerts.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type ContactPageRow = typeof contactPages.$inferSelect;
 export type ContactPageEntryRow = typeof contactPageEntries.$inferSelect;
+export type PersonAuditRow = typeof personAudit.$inferSelect;
