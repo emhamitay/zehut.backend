@@ -285,4 +285,20 @@ describe("existing routes are protected", () => {
     );
     expect(res.status).toBe(401);
   });
+
+  test("POST /api/contact-pages returns 401 without token", async () => {
+    const { app } = appFor(tdb);
+    const res = await app.handle(
+      new Request("http://localhost/api/contact-pages", { method: "POST" })
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test("GET /api/contact-pages returns 401 without token", async () => {
+    const { app } = appFor(tdb);
+    const res = await app.handle(
+      new Request("http://localhost/api/contact-pages")
+    );
+    expect(res.status).toBe(401);
+  });
 });
