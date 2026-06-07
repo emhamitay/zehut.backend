@@ -48,6 +48,7 @@ export const AlertSchema = t.Object({
   resolvedAt: t.Union([t.String(), t.Date(), t.Null()]),
   resolvedByUserId: t.Union([t.String(), t.Null()]),
   createdAt: t.Union([t.String(), t.Date()]),
+  relatedPerson: t.Union([PersonWithPhonesSchema, t.Null()]),
 });
 
 export const CommitResultSchema = t.Object({
@@ -89,7 +90,12 @@ export const PersonAuditFieldSchema = t.Union([
   t.Literal("phone_added"),
   t.Literal("phone_removed"),
   t.Literal("merged_from"),
+  t.Literal("deleted"),
 ]);
+
+export const DeletePersonInputSchema = t.Object({
+  reason: t.String(),
+});
 
 export const UpdatePersonInputSchema = t.Object({
   nationalId: t.Optional(t.Union([t.String(), t.Null()])),

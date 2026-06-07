@@ -36,6 +36,13 @@
       "when": 1780778928976,
       "tag": "0004_strong_ricochet",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780865710411,
+      "tag": "0005_reflective_hellion",
+      "breakpoints": true
     }
   ]
 }

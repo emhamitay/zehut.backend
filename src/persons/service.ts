@@ -1,14 +1,19 @@
 import type { Contact } from "../lib/types";
 import { decide, type AlertSpec, type NormalizedContact } from "./match";
 import { isValidPhone, normalizePhone } from "./normalize";
-import { repo as defaultRepo, type PersonWithPhones, type Repo } from "./repo";
+import {
+  repo as defaultRepo,
+  type AlertWithRelated,
+  type PersonWithPhones,
+  type Repo,
+} from "./repo";
 import type { AlertRow } from "../db/schema";
 
 export type CommitResult = {
   inserted: PersonWithPhones[];
   ignored: number;
   phoneAdded: { person: PersonWithPhones; addedPhones: string[] }[];
-  alerts: AlertRow[];
+  alerts: AlertWithRelated[];
 };
 
 function normalize(c: Contact): NormalizedContact {
@@ -49,7 +54,12 @@ export async function commitContacts(
   sourceFile: string | null,
   repo: Repo = defaultRepo
 ): Promise<CommitResult> {
-  const result: CommitResult = {
+  const result: {
+    inserted: PersonWithPhones[];
+    ignored: number;
+    phoneAdded: { person: PersonWithPhones; addedPhones: string[] }[];
+    alerts: AlertRow[];
+  } = {
     inserted: [],
     ignored: 0,
     phoneAdded: [],
@@ -160,5 +170,11 @@ export async function commitContacts(
     result.ignored += 1;
   }
 
-  return result;
+  const enrichedAlerts = await repo.attachRelatedPersons(result.alerts);
+  return {
+    inserted: result.inserted,
+    ignored: result.ignored,
+    phoneAdded: result.phoneAdded,
+    alerts: enrichedAlerts,
+  };
 }

@@ -17,6 +17,10 @@ import {
 
 export type PersonWithPhones = PersonRow & { phones: string[] };
 
+export type AlertWithRelated = AlertRow & {
+  relatedPerson: PersonWithPhones | null;
+};
+
 export type InsertPersonInput = {
   nationalId: string | null;
   fullname: string | null;
@@ -285,11 +289,42 @@ export function makeRepo(database: Database = defaultDb) {
     return attachPhones(rows);
   }
 
-  async function listOpenAlerts(personId: string): Promise<AlertRow[]> {
-    return database
+  async function listOpenAlerts(
+    personId: string
+  ): Promise<AlertWithRelated[]> {
+    const rows = await database
       .select()
       .from(alerts)
       .where(and(eq(alerts.personId, personId), isNull(alerts.resolvedAt)));
+    return attachRelatedPersons(rows);
+  }
+
+  async function attachRelatedPersons(
+    rows: AlertRow[]
+  ): Promise<AlertWithRelated[]> {
+    if (rows.length === 0) return [];
+    const ids = Array.from(
+      new Set(
+        rows
+          .map((r) => r.relatedPersonId)
+          .filter((id): id is string => !!id)
+      )
+    );
+    if (ids.length === 0) {
+      return rows.map((r) => ({ ...r, relatedPerson: null }));
+    }
+    const personRows = await database
+      .select()
+      .from(persons)
+      .where(inArray(persons.id, ids));
+    const withPhones = await attachPhones(personRows);
+    const byId = new Map(withPhones.map((p) => [p.id, p]));
+    return rows.map((r) => ({
+      ...r,
+      relatedPerson: r.relatedPersonId
+        ? byId.get(r.relatedPersonId) ?? null
+        : null,
+    }));
   }
 
   async function resolveAlert(
@@ -357,7 +392,7 @@ export function makeRepo(database: Database = defaultDb) {
       .from(personAudit)
       .leftJoin(users, eq(users.id, personAudit.userId))
       .where(eq(personAudit.personId, personId))
-      .orderBy(desc(personAudit.createdAt));
+      .orderBy(desc(personAudit.createdAt), desc(personAudit.id));
     return rows.map((r) => ({
       id: r.id,
       field: r.field,
@@ -518,6 +553,7 @@ export function makeRepo(database: Database = defaultDb) {
     removePhones,
     searchByNameSubstring,
     listOpenAlerts,
+    attachRelatedPersons,
     resolveAlert,
     insertAuditRows,
     listAudit,
