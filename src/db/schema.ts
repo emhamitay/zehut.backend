@@ -69,7 +69,7 @@ export const alerts = pgTable(
       .references(() => persons.id, { onDelete: "cascade" })
       .notNull(),
     relatedPersonId: uuid("related_person_id").references(() => persons.id, {
-      onDelete: "cascade",
+      onDelete: "set null",
     }),
     details: jsonb("details").$type<AlertDetails>().notNull(),
     sourceFile: text("source_file"),
@@ -93,6 +93,7 @@ export const PERSON_AUDIT_FIELDS = [
   "phone_added",
   "phone_removed",
   "merged_from",
+  "deleted",
 ] as const;
 export type PersonAuditField = (typeof PERSON_AUDIT_FIELDS)[number];
 
@@ -100,9 +101,9 @@ export const personAudit = pgTable(
   "person_audit",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    personId: uuid("person_id")
-      .references(() => persons.id, { onDelete: "cascade" })
-      .notNull(),
+    personId: uuid("person_id").references(() => persons.id, {
+      onDelete: "set null",
+    }),
     userId: uuid("user_id")
       .references(() => users.id, { onDelete: "cascade" })
       .notNull(),

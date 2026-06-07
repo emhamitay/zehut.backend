@@ -2,12 +2,14 @@ import { Elysia, t } from "elysia";
 import { commitContacts } from "./service";
 import { updatePerson } from "./update";
 import { mergePersons } from "./merge";
+import { deletePersonAction } from "./delete";
 import { searchPersons, type SearchBy } from "./search";
 import { getPersonHistory } from "./history";
 import { repo } from "./repo";
 import {
   CommitInputSchema,
   CommitResultSchema,
+  DeletePersonInputSchema,
   MergePersonsInputSchema,
   PersonDetailSchema,
   PersonHistoryEntrySchema,
@@ -152,6 +154,33 @@ export function personsRoutes(auth: AuthService) {
       {
         params: t.Object({ id: t.String() }),
         body: UpdatePersonInputSchema,
+      }
+    )
+    .delete(
+      "/:id",
+      async ({ params, body, request, set }) => {
+        const userId = await currentUserIdFromRequest(auth, request);
+        if (!userId) {
+          set.status = 401;
+          return { error: "unauthorized" };
+        }
+        const result = await deletePersonAction(
+          { personId: params.id, reason: body.reason },
+          userId
+        );
+        if (!result.ok) {
+          if (result.error === "not_found") {
+            set.status = 404;
+            return { error: "not_found" };
+          }
+          set.status = 400;
+          return { ok: false, error: result.error };
+        }
+        return result;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: DeletePersonInputSchema,
       }
     )
     .post(

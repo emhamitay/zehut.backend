@@ -1,7 +1,7 @@
-import { decide, type AlertSpec, type NormalizedContact } from "./match";
+import type { NormalizedContact } from "./match";
 import { isValidPhone, normalizePhone } from "./normalize";
 import { repo as defaultRepo, type PersonWithPhones, type Repo } from "./repo";
-import type { AlertRow, PersonAuditRow } from "../db/schema";
+import type { AlertKind, AlertRow, PersonAuditRow } from "../db/schema";
 
 export type UpdatePersonInput = {
   personId: string;
@@ -11,15 +11,17 @@ export type UpdatePersonInput = {
   reason?: string | null;
 };
 
+export type MismatchedField = "id" | "name" | "phone";
+
 export type ConflictDetail = {
-  kind: AlertSpec["kind"];
+  kind: AlertKind;
   otherPerson: {
     id: string;
     nationalId: string | null;
     fullname: string | null;
     phones: string[];
   };
-  mismatchedFields: AlertSpec["details"]["mismatchedFields"];
+  mismatchedFields: MismatchedField[];
 };
 
 export type UpdateResult =
@@ -93,32 +95,81 @@ function summarize(p: PersonWithPhones) {
   };
 }
 
-function decisionConflicts(
-  decisionAlerts: AlertSpec[],
-  candidates: PersonWithPhones[]
-): ConflictDetail[] {
-  const out: ConflictDetail[] = [];
-  const byId = new Map(candidates.map((p) => [p.id, p]));
-  const seen = new Set<string>();
+function fieldEqualsCaseInsensitive(
+  a: string | null,
+  b: string | null
+): boolean {
+  if (!a || !b) return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
 
-  for (const a of decisionAlerts) {
-    const related = a.relatedPersonId ? byId.get(a.relatedPersonId) : null;
-    if (related) {
-      seen.add(related.id);
-      out.push({
-        kind: a.kind,
-        otherPerson: summarize(related),
-        mismatchedFields: a.details.mismatchedFields,
-      });
-    }
+function describeConflict(
+  other: PersonWithPhones,
+  candidate: NormalizedContact,
+  candidatePhoneNormalized: Set<string>,
+  otherPhoneNormalized: Set<string>
+): ConflictDetail {
+  const idMatches =
+    !!candidate.nationalId &&
+    !!other.nationalId &&
+    candidate.nationalId === other.nationalId;
+  const nameMatches = fieldEqualsCaseInsensitive(
+    candidate.fullname,
+    other.fullname
+  );
+  const phoneMatches = [...candidatePhoneNormalized].some((n) =>
+    otherPhoneNormalized.has(n)
+  );
+
+  const mismatchedFields: MismatchedField[] = [];
+  if (
+    candidate.nationalId &&
+    other.nationalId &&
+    candidate.nationalId !== other.nationalId
+  ) {
+    mismatchedFields.push("id");
   }
-  for (const c of candidates) {
-    if (seen.has(c.id)) continue;
-    out.push({
-      kind: decisionAlerts[0]?.kind ?? "cross_person_mismatch",
-      otherPerson: summarize(c),
-      mismatchedFields: decisionAlerts[0]?.details.mismatchedFields ?? [],
-    });
+  if (
+    candidate.fullname &&
+    other.fullname &&
+    !fieldEqualsCaseInsensitive(candidate.fullname, other.fullname)
+  ) {
+    mismatchedFields.push("name");
+  }
+  if (candidatePhoneNormalized.size > 0 && otherPhoneNormalized.size > 0) {
+    const allOverlap = [...candidatePhoneNormalized].every((n) =>
+      otherPhoneNormalized.has(n)
+    );
+    if (!allOverlap && phoneMatches === false) mismatchedFields.push("phone");
+  }
+
+  let kind: AlertKind;
+  if (idMatches) {
+    kind = "name_mismatch_on_id";
+  } else if (phoneMatches && nameMatches) {
+    kind = "id_mismatch_name_phone_match";
+  } else if (phoneMatches) {
+    kind = "phone_match_name_differs_no_id";
+  } else if (nameMatches) {
+    kind = "name_match_no_id";
+  } else {
+    kind = "cross_person_mismatch";
+  }
+
+  return {
+    kind,
+    otherPerson: summarize(other),
+    mismatchedFields,
+  };
+}
+
+function dedupeById(rows: PersonWithPhones[]): PersonWithPhones[] {
+  const seen = new Set<string>();
+  const out: PersonWithPhones[] = [];
+  for (const r of rows) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push(r);
   }
   return out;
 }
@@ -211,33 +262,28 @@ export async function updatePerson(
     ? await repo.findOtherByFullname(candidate.fullname, current.id)
     : [];
 
-  const phoneNormalizedByRaw = new Map<string, string>();
-  for (const cand of [byId, ...byPhone, ...byName]) {
-    if (!cand) continue;
-    for (const raw of cand.phones) {
-      phoneNormalizedByRaw.set(raw, normalizePhone(raw));
-    }
-  }
-
-  const decision = decide(candidate, byId, byPhone, byName, phoneNormalizedByRaw);
-
-  const candidatesForConflicts = [byId, ...byPhone, ...byName].filter(
-    (c): c is PersonWithPhones => c !== null
+  const others = dedupeById(
+    [byId, ...byPhone, ...byName].filter(
+      (c): c is PersonWithPhones => c !== null && c.id !== current.id
+    )
   );
 
-  if (decision.kind !== "insert") {
-    const alerts = "alerts" in decision ? decision.alerts : [];
-    return {
-      ok: false,
-      conflicts: decisionConflicts(alerts, candidatesForConflicts),
-    };
-  }
-
-  if (decision.alerts.length > 0) {
-    return {
-      ok: false,
-      conflicts: decisionConflicts(decision.alerts, candidatesForConflicts),
-    };
+  if (others.length > 0) {
+    const candidatePhoneNormalized = new Set(
+      candidate.phones.map((p) => p.normalized)
+    );
+    const conflicts = others.map((other) => {
+      const otherPhoneNormalized = new Set(
+        other.phones.map((raw) => normalizePhone(raw))
+      );
+      return describeConflict(
+        other,
+        candidate,
+        candidatePhoneNormalized,
+        otherPhoneNormalized
+      );
+    });
+    return { ok: false, conflicts };
   }
 
   const reason = trimOrNull(input.reason ?? null);
