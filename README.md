@@ -1,6 +1,6 @@
 # Zehut — Backend
 
-A full-stack system for ingesting, matching, and de-duplicating contact records collected from messy real-world spreadsheets and documents. This repository is the **API server**: a Bun + Elysia backend with a layered, feature-based architecture, JWT authentication, an LLM-assisted extraction pipeline, and a deterministic record-matching engine that never silently merges two people who might be different.
+Elysia + Bun API with PostgreSQL (via Drizzle) for the Zehut contact-management app — a system for ingesting, matching, and de-duplicating contact records collected from messy real-world spreadsheets and documents. This repository is the **API server**: a layered, feature-based architecture with JWT authentication, an LLM-assisted extraction pipeline, and a deterministic record-matching engine that never silently merges two people who might be different.
 
 > The companion React client lives in the [Zehut frontend repo](#). *(add link)*
 
@@ -87,50 +87,71 @@ Updates and merges re-evaluate open alerts and **auto-resolve** any whose underl
 
 ---
 
-## Getting started
+## Prerequisites
 
-### Prerequisites
 - [Bun](https://bun.sh)
-- PostgreSQL 14+ (a local Docker container works well)
+- [Docker](https://www.docker.com/) (for local Postgres)
 
-### 1. Database
-```bash
-docker run --name zehut-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zehut -p 5432:5432 -d postgres:16
-```
+## Environment
 
-### 2. Environment
-Create a `.env` (never commit it):
+Create a `.env` file (never commit it):
+
 ```env
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/zehut
-JWT_SECRET=replace-with-a-long-random-string
-
-# Optional: seed the first admin on startup
-BOOTSTRAP_ADMIN_USERNAME=admin
-BOOTSTRAP_ADMIN_PASSWORD=choose-a-strong-password
-
 # LLM extraction (required for /api/extract)
-OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_MODEL=your/model
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=...
 # OPENROUTER_BASE_URL=https://openrouter.ai/api/v1   # optional
 # OPENROUTER_SYSTEM_PROMPT=...                        # optional override
 
-# Contact pages
+# Database — optional; defaults to the local docker Postgres
+DATABASE_URL=postgres://postgres:postgres@localhost:5433/zehut
+
+# Auth
+JWT_SECRET=replace-with-a-long-random-string
+# Optional: seed the first admin user on startup
+BOOTSTRAP_ADMIN_USERNAME=admin
+BOOTSTRAP_ADMIN_PASSWORD=choose-a-strong-password
+
+# Contact pages (CURRENT_SEASON is required to generate pages)
 CURRENT_SEASON=2026
 CONTACT_PAGE_ROWS=25
 CONTACT_PAGE_PAIR_ROWS=3
 ```
 
-### 3. Install, migrate, run
+## Scripts
+
+| Command | What it does |
+| --- | --- |
+| `bun run db` | Start the local Postgres container (`docker compose up -d --wait`). Idempotent — safe to run repeatedly. |
+| `bun run db:down` | Stop the Postgres container. Data persists in the named volume. |
+| `bun run db:push` | Apply the current Drizzle schema directly to the DB. Use this in dev after editing `src/db/schema.ts`. |
+| `bun run db:generate` | Generate a new SQL migration file from the current schema. Use when you want a tracked migration. |
+| `bun run db:migrate` | Apply pending migrations to the DB. |
+| `bun run db:studio` | Open Drizzle Studio to browse the tables. |
+| `bun run dev` | Start the API (`http://localhost:4000`) with file watching. |
+| `bun test` | Run the test suite. |
+
+## First-time setup
+
 ```bash
 bun install
-bunx drizzle-kit push      # apply the schema — adjust to your migration setup
-bun run src/index.ts       # or your dev script; server listens on :4000
+bun run db          # boots Postgres
+bun run db:push     # applies the schema
+bun run dev         # starts the API
 ```
 
-### 4. Test
+After that, day-to-day you typically only need:
+
 ```bash
-bun test
+bun run db          # if the container isn't already up
+bun run dev
 ```
+
+Re-run `bun run db:push` whenever you change `src/db/schema.ts`.
+
+## Switching to a hosted Postgres (Neon, Supabase, etc.)
+
+Set `DATABASE_URL` to the hosted connection string. No schema changes required — skip `bun run db` and `bun run db:down` since you no longer need the local container.
 
 ---
 
