@@ -93,7 +93,7 @@ describe("updatePerson", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("auto-resolves an open alert whose cause is fixed", async () => {
+  test("deletes an open alert whose cause is fixed and records an alert_closed audit row", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [{ id: "111", fullname: "Alice", phone: ["0500000000"] }],
@@ -116,8 +116,13 @@ describe("updatePerson", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.resolvedAlerts.length).toBeGreaterThan(0);
-    expect(result.resolvedAlerts[0].resolvedByUserId).toBe(userId);
+    expect(result.closedAlerts.length).toBeGreaterThan(0);
+    // Each closed alert leaves an `alert_closed` audit row as the only
+    // record that this person used to have a data error.
+    const closedAuditRows = result.audit.filter(
+      (a) => a.field === "alert_closed"
+    );
+    expect(closedAuditRows.length).toBe(result.closedAlerts.length);
 
     const openAfter = await repo.listOpenAlerts(person.id);
     expect(openAfter).toHaveLength(0);
@@ -192,7 +197,10 @@ describe("updatePerson", () => {
     expect(reloaded.phones).toHaveLength(1);
   });
 
-  test("rejects when both null-id persons collide via name-only match", async () => {
+  test("name-only matches are no longer a blocker — renaming to a homonym just saves", async () => {
+    // The product rule changed: a bare name match (no shared nationalId
+    // and no shared phone) is not a uniqueness violation. Homonyms are
+    // real, and the system stays silent about them.
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
@@ -212,13 +220,11 @@ describe("updatePerson", () => {
       userId,
       repo
     );
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected reject");
-    if ("notFound" in result) throw new Error("expected conflicts");
-    expect(result.conflicts.length).toBeGreaterThan(0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
 
     const reloaded = (await repo.findById(shimon.id))!;
-    expect(reloaded.fullname).toBe("Shimon Cohen");
+    expect(reloaded.fullname).toBe("Yossi Cohen");
   });
 
   test("returns audit rows for all changes when several fields change at once", async () => {

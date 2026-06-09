@@ -27,10 +27,11 @@ export async function deletePersonAction(
   const victim = await repo.findById(input.personId);
   if (!victim) return { ok: false, error: "not_found" };
 
-  const openAlerts = await repo.listOpenAlerts(victim.id);
-  for (const alert of openAlerts) {
-    await repo.resolveAlert(alert.id, userId);
-  }
+  // Symmetric: removes alerts where the victim is on either side.
+  // The personId FK already cascades on person delete, but the symmetric
+  // side would otherwise survive with a nulled relatedPersonId — and a
+  // dangling alert serves no one.
+  await repo.deleteAlertsTouchingPerson(victim.id);
 
   const audit = await repo.insertAuditRows([
     {

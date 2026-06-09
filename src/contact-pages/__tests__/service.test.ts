@@ -249,7 +249,10 @@ describe("contact-pages service", () => {
     expect(reread!.entries).toHaveLength(3);
   });
 
-  test("resolved alert no longer produces pair group or cross-page warning", async () => {
+  test("deleting the alert removes the pair group and cross-page warning", async () => {
+    // Alerts no longer have a resolved state — a fixed collision is
+    // realised by deleting the row, and that immediately drops the
+    // pair grouping and any cross-page warning the sheet was rendering.
     const repo = makeRepo(tdb.db);
     const service = makeService(repo);
     const u = await seedUser("u");
@@ -265,10 +268,7 @@ describe("contact-pages service", () => {
       createdAt: new Date(base.getTime() + 2000),
     });
     await seedAlert(a, b);
-    await tdb.db
-      .update(alerts)
-      .set({ resolvedAt: new Date() })
-      .where(eq(alerts.personId, a));
+    await tdb.db.delete(alerts).where(eq(alerts.personId, a));
 
     const page = await service.generatePageForUser(
       u,

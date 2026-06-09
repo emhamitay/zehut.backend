@@ -1,0 +1,50 @@
+Out-of-scope ideas captured during the data-error UX simplification.
+Not for the first slice — revisit later.
+
+============================================================
+1. /data-errors review queue page
+============================================================
+
+A single page that lists every open data error across the whole DB,
+not just the ones a coordinator stumbles across while editing one
+citizen.
+
+Shape:
+  - Same DataErrorRow component used elsewhere.
+  - Grouped or sorted by error type (תעודת זהות first, then טלפון).
+  - Each row links straight to the citizen detail page,
+    focused on the colliding field, exactly like the
+    in-page "ערוך" button does.
+  - Counter at the top: "N שגיאות נתונים פתוחות".
+
+Why it's not in the first slice: the current surfaces
+(CitizenDetail / UploadSummary / ContactSheets / search badge)
+already cover every place a coordinator naturally lands.
+The queue is a "spring cleaning" view — useful, but additive,
+and worth shipping after the core flow is stable.
+
+============================================================
+2. OpenAI latency — frontend-first, OpenRouter fallback
+============================================================
+
+Today the OpenAI call (used during ingest / name-matching)
+is the slowest step in the upload flow and dominates UX cost.
+
+Two changes worth trying, in order:
+
+  a) Do as much as possible client-side before calling the model.
+     - String normalization (whitespace, RTL marks, niqqud,
+       Hebrew/Arabic letter variants, leading zeros on phones,
+       hyphen/space stripping on national IDs).
+     - Exact-match and deterministic near-match checks
+       (Levenshtein <= 1 on normalized name, etc).
+     - Only fall through to the LLM when the deterministic
+       layer is genuinely ambiguous.
+
+  b) When the LLM is needed, route through OpenRouter instead
+     of OpenAI directly. OpenRouter lets us pick faster/cheaper
+     models per request and fall over between providers, which
+     should bring p95 latency down meaningfully.
+
+The combination should turn most uploads into a fully client-side
+operation, with the model call reserved for the genuinely fuzzy cases.

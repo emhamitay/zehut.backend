@@ -1,15 +1,17 @@
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db as defaultDb, type Database } from "../db/client";
 import {
   alerts,
   contactPageEntries,
   contactPages,
+  dataErrorTypeFromAlertKind,
   personAudit,
   persons,
   phones,
   users,
   type AlertKind,
   type AlertRow,
+  type DataErrorType,
   type PersonAuditField,
   type PersonAuditRow,
   type PersonRow,
@@ -18,6 +20,7 @@ import {
 export type PersonWithPhones = PersonRow & { phones: string[] };
 
 export type AlertWithRelated = AlertRow & {
+  errorType: DataErrorType;
   relatedPerson: PersonWithPhones | null;
 };
 
@@ -289,14 +292,28 @@ export function makeRepo(database: Database = defaultDb) {
     return attachPhones(rows);
   }
 
+  // Symmetric: returns every open alert that touches this person, whether
+  // they are on the person side or the related-person side. The same alert
+  // row is therefore visible on both citizens' detail pages.
   async function listOpenAlerts(
     personId: string
   ): Promise<AlertWithRelated[]> {
     const rows = await database
       .select()
       .from(alerts)
-      .where(and(eq(alerts.personId, personId), isNull(alerts.resolvedAt)));
-    return attachRelatedPersons(rows);
+      .where(
+        or(
+          eq(alerts.personId, personId),
+          eq(alerts.relatedPersonId, personId)
+        )
+      );
+    const seen = new Set<string>();
+    const deduped = rows.filter((r) => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+    return attachRelatedPersons(deduped);
   }
 
   async function attachRelatedPersons(
@@ -310,33 +327,52 @@ export function makeRepo(database: Database = defaultDb) {
           .filter((id): id is string => !!id)
       )
     );
-    if (ids.length === 0) {
-      return rows.map((r) => ({ ...r, relatedPerson: null }));
+    const byId = new Map<string, PersonWithPhones>();
+    if (ids.length > 0) {
+      const personRows = await database
+        .select()
+        .from(persons)
+        .where(inArray(persons.id, ids));
+      const withPhones = await attachPhones(personRows);
+      for (const p of withPhones) byId.set(p.id, p);
     }
-    const personRows = await database
-      .select()
-      .from(persons)
-      .where(inArray(persons.id, ids));
-    const withPhones = await attachPhones(personRows);
-    const byId = new Map(withPhones.map((p) => [p.id, p]));
     return rows.map((r) => ({
       ...r,
+      errorType: dataErrorTypeFromAlertKind(r.kind),
       relatedPerson: r.relatedPersonId
         ? byId.get(r.relatedPersonId) ?? null
         : null,
     }));
   }
 
-  async function resolveAlert(
-    alertId: string,
-    userId: string
-  ): Promise<AlertRow | null> {
+  // Alerts have a binary lifecycle: they exist while the collision is live
+  // and are deleted (not marked resolved) the moment it's no longer true.
+  // Callers that need a breadcrumb should write a `person_audit` row with
+  // field = 'alert_closed' before calling this.
+  async function deleteAlert(alertId: string): Promise<AlertRow | null> {
     const [row] = await database
-      .update(alerts)
-      .set({ resolvedAt: new Date(), resolvedByUserId: userId })
+      .delete(alerts)
       .where(eq(alerts.id, alertId))
       .returning();
     return row ?? null;
+  }
+
+  // Used when a person is deleted: removes any alert this person was part
+  // of, regardless of whether they were the person or the related-person.
+  // The personId FK already cascades on person delete, but the symmetric
+  // side would otherwise survive with a nulled relatedPersonId.
+  async function deleteAlertsTouchingPerson(
+    personId: string
+  ): Promise<AlertRow[]> {
+    return database
+      .delete(alerts)
+      .where(
+        or(
+          eq(alerts.personId, personId),
+          eq(alerts.relatedPersonId, personId)
+        )
+      )
+      .returning();
   }
 
   async function insertAuditRows(
@@ -520,6 +556,10 @@ export function makeRepo(database: Database = defaultDb) {
     return attachPhones(rows);
   }
 
+  // Counts every alert that touches each person, symmetrically. An alert
+  // where personId=A and relatedPersonId=B contributes one to A and one
+  // to B, so a citizen showing "2 שגיאות" on search means two distinct
+  // collisions, not one collision counted twice.
   async function countOpenAlertsForPersons(
     personIds: string[]
   ): Promise<Map<string, number>> {
@@ -527,16 +567,30 @@ export function makeRepo(database: Database = defaultDb) {
     if (personIds.length === 0) return out;
     const rows = await database
       .select({
+        id: alerts.id,
         personId: alerts.personId,
-        count: sql<number>`count(*)::int`.as("count"),
+        relatedPersonId: alerts.relatedPersonId,
       })
       .from(alerts)
       .where(
-        and(inArray(alerts.personId, personIds), isNull(alerts.resolvedAt))
-      )
-      .groupBy(alerts.personId);
-    for (const r of rows) out.set(r.personId, Number(r.count));
-    for (const id of personIds) if (!out.has(id)) out.set(id, 0);
+        or(
+          inArray(alerts.personId, personIds),
+          inArray(alerts.relatedPersonId, personIds)
+        )
+      );
+    const wanted = new Set(personIds);
+    for (const id of personIds) out.set(id, 0);
+    for (const r of rows) {
+      if (wanted.has(r.personId)) {
+        out.set(r.personId, (out.get(r.personId) ?? 0) + 1);
+      }
+      if (r.relatedPersonId && wanted.has(r.relatedPersonId)) {
+        out.set(
+          r.relatedPersonId,
+          (out.get(r.relatedPersonId) ?? 0) + 1
+        );
+      }
+    }
     return out;
   }
 
@@ -554,7 +608,8 @@ export function makeRepo(database: Database = defaultDb) {
     searchByNameSubstring,
     listOpenAlerts,
     attachRelatedPersons,
-    resolveAlert,
+    deleteAlert,
+    deleteAlertsTouchingPerson,
     insertAuditRows,
     listAudit,
     reassignAlertsPerson,

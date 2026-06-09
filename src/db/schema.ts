@@ -55,10 +55,30 @@ export const ALERT_KINDS = [
   "id_mismatch_name_phone_match",
   "id_name_mismatch_on_phone",
   "cross_person_mismatch",
-  "name_match_no_id",
   "phone_match_name_differs_no_id",
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
+
+// Two user-facing error types are derived from AlertKind. Same name on
+// two records with no shared unique field is no longer flagged at all —
+// homonyms are real and silent. Live alerts only describe a uniqueness
+// violation on `nationalId` or on a phone number.
+export type DataErrorType = "id_data_error" | "phone_data_error";
+
+export function dataErrorTypeFromAlertKind(kind: AlertKind): DataErrorType {
+  switch (kind) {
+    // Two records share the same nationalId but names differ.
+    case "name_mismatch_on_id":
+    case "name_phone_mismatch_on_id":
+      return "id_data_error";
+    // Two records share a phone but appear to be different people.
+    case "id_mismatch_name_phone_match":
+    case "id_name_mismatch_on_phone":
+    case "cross_person_mismatch":
+    case "phone_match_name_differs_no_id":
+      return "phone_data_error";
+  }
+}
 
 export const alerts = pgTable(
   "alerts",
@@ -73,17 +93,13 @@ export const alerts = pgTable(
     }),
     details: jsonb("details").$type<AlertDetails>().notNull(),
     sourceFile: text("source_file"),
-    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-    resolvedByUserId: uuid("resolved_by_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (t) => ({
     personIdx: index("alerts_person_idx").on(t.personId),
-    unresolvedIdx: index("alerts_unresolved_idx").on(t.resolvedAt),
+    relatedPersonIdx: index("alerts_related_person_idx").on(t.relatedPersonId),
   })
 );
 
@@ -94,6 +110,7 @@ export const PERSON_AUDIT_FIELDS = [
   "phone_removed",
   "merged_from",
   "deleted",
+  "alert_closed",
 ] as const;
 export type PersonAuditField = (typeof PERSON_AUDIT_FIELDS)[number];
 
