@@ -92,4 +92,47 @@ describe("repo", () => {
     expect(a.id).toBeTruthy();
     expect(a.kind).toBe("name_mismatch_on_id");
   });
+
+  test("listOpenAlerts is viewer-aware: relatedPerson is always the OTHER side", async () => {
+    const repo = makeRepo(tdb.db);
+    // Two people who share a phone but have different IDs. The alert is
+    // stored as personId=second, relatedPersonId=first (the order the
+    // ingest pipeline produces). Both citizens must see the *other* one.
+    const first = await repo.insertPersonWithPhones({
+      nationalId: "111",
+      fullname: "David",
+      phones: [{ raw: "0500000000", normalized: "0500000000" }],
+    });
+    const second = await repo.insertPersonWithPhones({
+      nationalId: "222",
+      fullname: "Naomi",
+      phones: [{ raw: "0500000000", normalized: "0500000000" }],
+    });
+    await repo.insertAlert({
+      kind: "id_name_mismatch_on_phone",
+      personId: second.id,
+      relatedPersonId: first.id,
+      details: {
+        matchedOn: "phone",
+        mismatchedFields: ["id", "name"],
+        incoming: { id: "222", fullname: "Naomi", phone: ["0500000000"] },
+      },
+      sourceFile: "x",
+    });
+
+    const fromFirst = await repo.listOpenAlerts(first.id);
+    expect(fromFirst).toHaveLength(1);
+    expect(fromFirst[0].relatedPerson?.id).toBe(second.id);
+    expect(fromFirst[0].relatedPerson?.fullname).toBe("Naomi");
+    expect(fromFirst[0].collidingValue).toBe("0500000000");
+
+    const fromSecond = await repo.listOpenAlerts(second.id);
+    expect(fromSecond).toHaveLength(1);
+    // The bug was: this used to also return `second` (relatedPersonId
+    // side) instead of `first`, so the second citizen saw themselves as
+    // their own "other side" and the link pointed back at the same page.
+    expect(fromSecond[0].relatedPerson?.id).toBe(first.id);
+    expect(fromSecond[0].relatedPerson?.fullname).toBe("David");
+    expect(fromSecond[0].collidingValue).toBe("0500000000");
+  });
 });

@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db as defaultDb, type Database } from "../db/client";
+import { normalizePhone } from "./normalize";
 import {
   alerts,
   contactPageEntries,
@@ -19,10 +20,42 @@ import {
 
 export type PersonWithPhones = PersonRow & { phones: string[] };
 
+// `relatedPerson` is always "the other side" of the alert — when a
+// viewerId is provided to attachRelatedPersons (e.g. from listOpenAlerts),
+// it returns the side that *isn't* the viewer, not necessarily the
+// alert's relatedPersonId. This is what every consumer actually wants:
+// the citizen on the other side of the collision.
+//
+// `collidingValue` is the value that triggered the alert: the shared
+// nationalId for id_data_error, or one of the shared phone numbers for
+// phone_data_error. The frontend uses this to write copy like
+// "מספר הטלפון 050-1234567 מופיע גם אצל יוסי כהן" without having to
+// re-derive which phone collided.
 export type AlertWithRelated = AlertRow & {
   errorType: DataErrorType;
   relatedPerson: PersonWithPhones | null;
+  collidingValue: string | null;
 };
+
+function computeCollidingValue(
+  kind: AlertKind,
+  viewer: PersonWithPhones | null,
+  other: PersonWithPhones | null
+): string | null {
+  if (!other) return null;
+  const errorType = dataErrorTypeFromAlertKind(kind);
+  if (errorType === "id_data_error") {
+    return other.nationalId ?? viewer?.nationalId ?? null;
+  }
+  if (!viewer) return other.phones[0] ?? null;
+  const viewerNormalized = new Set(
+    viewer.phones.map((raw) => normalizePhone(raw))
+  );
+  for (const raw of other.phones) {
+    if (viewerNormalized.has(normalizePhone(raw))) return raw;
+  }
+  return other.phones[0] ?? null;
+}
 
 export type InsertPersonInput = {
   nationalId: string | null;
@@ -294,7 +327,8 @@ export function makeRepo(database: Database = defaultDb) {
 
   // Symmetric: returns every open alert that touches this person, whether
   // they are on the person side or the related-person side. The same alert
-  // row is therefore visible on both citizens' detail pages.
+  // row is therefore visible on both citizens' detail pages, and from
+  // each one's perspective `relatedPerson` is the *other* citizen.
   async function listOpenAlerts(
     personId: string
   ): Promise<AlertWithRelated[]> {
@@ -313,36 +347,54 @@ export function makeRepo(database: Database = defaultDb) {
       seen.add(r.id);
       return true;
     });
-    return attachRelatedPersons(deduped);
+    return attachRelatedPersons(deduped, personId);
   }
 
+  // When `viewerId` is supplied, `relatedPerson` is the side of the alert
+  // that isn't the viewer (so it's symmetric: visiting either citizen
+  // shows the other). Without a viewer we fall back to the alert's
+  // relatedPersonId side — used by code paths that don't have a single
+  // "self" perspective (e.g. the post-commit batch enrichment).
   async function attachRelatedPersons(
-    rows: AlertRow[]
+    rows: AlertRow[],
+    viewerId?: string
   ): Promise<AlertWithRelated[]> {
     if (rows.length === 0) return [];
-    const ids = Array.from(
-      new Set(
-        rows
-          .map((r) => r.relatedPersonId)
-          .filter((id): id is string => !!id)
-      )
-    );
+    const otherIdFor = (r: AlertRow): string | null =>
+      viewerId
+        ? r.personId === viewerId
+          ? r.relatedPersonId
+          : r.personId
+        : r.relatedPersonId;
+
+    const idsToFetch = new Set<string>();
+    for (const r of rows) {
+      const otherId = otherIdFor(r);
+      if (otherId) idsToFetch.add(otherId);
+    }
+    if (viewerId) idsToFetch.add(viewerId);
+
     const byId = new Map<string, PersonWithPhones>();
-    if (ids.length > 0) {
+    if (idsToFetch.size > 0) {
       const personRows = await database
         .select()
         .from(persons)
-        .where(inArray(persons.id, ids));
+        .where(inArray(persons.id, Array.from(idsToFetch)));
       const withPhones = await attachPhones(personRows);
       for (const p of withPhones) byId.set(p.id, p);
     }
-    return rows.map((r) => ({
-      ...r,
-      errorType: dataErrorTypeFromAlertKind(r.kind),
-      relatedPerson: r.relatedPersonId
-        ? byId.get(r.relatedPersonId) ?? null
-        : null,
-    }));
+    const viewer = viewerId ? byId.get(viewerId) ?? null : null;
+
+    return rows.map((r) => {
+      const otherId = otherIdFor(r);
+      const other = otherId ? byId.get(otherId) ?? null : null;
+      return {
+        ...r,
+        errorType: dataErrorTypeFromAlertKind(r.kind),
+        relatedPerson: other,
+        collidingValue: computeCollidingValue(r.kind, viewer, other),
+      };
+    });
   }
 
   // Alerts have a binary lifecycle: they exist while the collision is live

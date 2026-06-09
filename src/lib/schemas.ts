@@ -54,6 +54,7 @@ export const AlertSchema = t.Object({
   sourceFile: t.Union([t.String(), t.Null()]),
   createdAt: t.Union([t.String(), t.Date()]),
   relatedPerson: t.Union([PersonWithPhonesSchema, t.Null()]),
+  collidingValue: t.Union([t.String(), t.Null()]),
 });
 
 export const CommitResultSchema = t.Object({
@@ -126,6 +127,7 @@ const ConflictDetailSchema = t.Object({
   mismatchedFields: t.Array(
     t.Union([t.Literal("id"), t.Literal("name"), t.Literal("phone")])
   ),
+  collidingValue: t.Union([t.String(), t.Null()]),
 });
 
 export const PersonAuditRowSchema = t.Object({
