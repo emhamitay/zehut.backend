@@ -27,6 +27,13 @@ export type ConflictDetail = {
     phones: string[];
   };
   mismatchedFields: MismatchedField[];
+  // The exact value the candidate save tried to write that already exists
+  // on `otherPerson`. For an ID collision it's the shared nationalId;
+  // for a phone collision it's the specific phone the two candidates
+  // share (not just otherPerson.phones[0]). The frontend renders this
+  // verbatim in the save-error modal so the coordinator sees which value
+  // to change.
+  collidingValue: string | null;
 };
 
 export type UpdateResult =
@@ -146,12 +153,16 @@ function describeConflict(
   }
 
   let kind: AlertKind;
+  let collidingValue: string | null = null;
   if (idMatches) {
     kind = "name_mismatch_on_id";
+    collidingValue = candidate.nationalId;
   } else if (phoneMatches && nameMatches) {
     kind = "id_mismatch_name_phone_match";
+    collidingValue = sharedPhoneRaw(other, candidatePhoneNormalized);
   } else if (phoneMatches) {
     kind = "phone_match_name_differs_no_id";
+    collidingValue = sharedPhoneRaw(other, candidatePhoneNormalized);
   } else {
     // No id match and no phone match means this candidate just shares a
     // name with `other` — not a blocking collision.
@@ -162,7 +173,21 @@ function describeConflict(
     kind,
     otherPerson: summarize(other),
     mismatchedFields,
+    collidingValue,
   };
+}
+
+// Find the raw phone on `other` that normalizes to one of the candidate's
+// phone values. Returns the other side's raw form so the UI shows the
+// value as it's stored on the existing record.
+function sharedPhoneRaw(
+  other: PersonWithPhones,
+  candidateNormalized: Set<string>
+): string | null {
+  for (const raw of other.phones) {
+    if (candidateNormalized.has(normalizePhone(raw))) return raw;
+  }
+  return other.phones[0] ?? null;
 }
 
 function dedupeById(rows: PersonWithPhones[]): PersonWithPhones[] {
@@ -438,8 +463,10 @@ export async function updatePerson(
   );
   // Enrich for the API: each closed alert ships with its relatedPerson
   // (still in the DB at this point) and its derived errorType, matching
-  // the shape of openAlerts.
-  const closedAlerts = await repo.attachRelatedPersons(closed);
+  // the shape of openAlerts. Pass the refreshed person.id as viewer so
+  // `relatedPerson` is the *other* side of the closed alert, not the
+  // viewer themselves.
+  const closedAlerts = await repo.attachRelatedPersons(closed, refreshed.id);
 
   return {
     ok: true,
