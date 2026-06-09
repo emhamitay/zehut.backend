@@ -154,7 +154,10 @@ describe("decide", () => {
     if (d.kind === "add_phones") expect(d.alerts).toEqual([]);
   });
 
-  test("same name, no ids on either side, no phone overlap -> insert + name_match_no_id", () => {
+  test("same name, no ids on either side, no phone overlap -> insert silently", () => {
+    // Homonyms with no shared unique field are real and silent. The
+    // system no longer raises an alert just because two records have
+    // the same name.
     const p: PersonWithPhones = {
       ...makePerson({ fullname: "Alice", phones: ["0599999999"] }),
       nationalId: null,
@@ -167,11 +170,7 @@ describe("decide", () => {
     };
     const d = decide(c, null, [], [p], phoneMap(p));
     expect(d.kind).toBe("insert");
-    if (d.kind === "insert") {
-      expect(d.alerts).toHaveLength(1);
-      expect(d.alerts[0].kind).toBe("name_match_no_id");
-      expect(d.alerts[0].relatedPersonId).toBe(p.id);
-    }
+    if (d.kind === "insert") expect(d.alerts).toEqual([]);
   });
 
   test("same name, both have IDs but they differ, no phone overlap -> insert, no alert", () => {

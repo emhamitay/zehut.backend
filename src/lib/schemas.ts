@@ -22,17 +22,24 @@ const MismatchedFieldSchema = t.Union([
   t.Literal("phone"),
 ]);
 
+export const AlertKindSchema = t.Union([
+  t.Literal("name_mismatch_on_id"),
+  t.Literal("name_phone_mismatch_on_id"),
+  t.Literal("id_mismatch_name_phone_match"),
+  t.Literal("id_name_mismatch_on_phone"),
+  t.Literal("cross_person_mismatch"),
+  t.Literal("phone_match_name_differs_no_id"),
+]);
+
+export const DataErrorTypeSchema = t.Union([
+  t.Literal("id_data_error"),
+  t.Literal("phone_data_error"),
+]);
+
 export const AlertSchema = t.Object({
   id: t.String(),
-  kind: t.Union([
-    t.Literal("name_mismatch_on_id"),
-    t.Literal("name_phone_mismatch_on_id"),
-    t.Literal("id_mismatch_name_phone_match"),
-    t.Literal("id_name_mismatch_on_phone"),
-    t.Literal("cross_person_mismatch"),
-    t.Literal("name_match_no_id"),
-    t.Literal("phone_match_name_differs_no_id"),
-  ]),
+  kind: AlertKindSchema,
+  errorType: DataErrorTypeSchema,
   personId: t.String(),
   relatedPersonId: t.Union([t.String(), t.Null()]),
   details: t.Object({
@@ -45,8 +52,6 @@ export const AlertSchema = t.Object({
     incoming: ContactSchema,
   }),
   sourceFile: t.Union([t.String(), t.Null()]),
-  resolvedAt: t.Union([t.String(), t.Date(), t.Null()]),
-  resolvedByUserId: t.Union([t.String(), t.Null()]),
   createdAt: t.Union([t.String(), t.Date()]),
   relatedPerson: t.Union([PersonWithPhonesSchema, t.Null()]),
 });
@@ -91,6 +96,7 @@ export const PersonAuditFieldSchema = t.Union([
   t.Literal("phone_removed"),
   t.Literal("merged_from"),
   t.Literal("deleted"),
+  t.Literal("alert_closed"),
 ]);
 
 export const DeletePersonInputSchema = t.Object({
@@ -137,7 +143,7 @@ export const UpdatePersonOkSchema = t.Object({
   ok: t.Literal(true),
   person: PersonWithPhonesSchema,
   audit: t.Array(PersonAuditRowSchema),
-  resolvedAlerts: t.Array(AlertSchema),
+  closedAlerts: t.Array(AlertSchema),
 });
 
 export const UpdatePersonConflictSchema = t.Object({

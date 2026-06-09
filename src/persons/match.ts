@@ -203,29 +203,8 @@ export function decide(
     return { kind: "add_phones", person: phonePerson, alerts: [] };
   }
 
-  // No id match, no phone match. Name-only match means we can't confirm
-  // whether this is the same person or a homonym -- unless both sides have
-  // IDs that differ, which proves they are distinct.
-  if (byName.length > 0) {
-    const namePerson = byName[0];
-    const idCmp = cmpField(namePerson.nationalId, incoming.nationalId);
-    if (idCmp === "mismatch") {
-      // Both have IDs and they differ -> definitively two different people.
-      return { kind: "insert", alerts: [] };
-    }
-    // At least one side has no ID -> warn for human review.
-    return {
-      kind: "insert",
-      alerts: [
-        {
-          kind: "name_match_no_id",
-          relatedPersonId: namePerson.id,
-          details: { matchedOn: "name", mismatchedFields: [] },
-        },
-      ],
-    };
-  }
-
-  // Clean new contact
+  // No id match, no phone match. A bare name match (even if the names are
+  // identical) is not a collision — homonyms are real, and there is no
+  // shared unique field to act on. Insert silently.
   return { kind: "insert", alerts: [] };
 }

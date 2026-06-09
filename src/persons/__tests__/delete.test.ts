@@ -86,7 +86,7 @@ describe("deletePersonAction", () => {
     expect(reloaded).toBeNull();
   });
 
-  test("nullifies relatedPersonId on alerts pointing to the deleted person", async () => {
+  test("deletes alerts touching the removed person on both sides", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
@@ -100,12 +100,12 @@ describe("deletePersonAction", () => {
     const bob = (await repo.findByFullname("Bob"))[0];
     expect(bob).toBeDefined();
 
+    // Alerts now have a binary lifecycle, and an alert "touches" a person
+    // symmetrically (either personId or relatedPersonId). After deleting
+    // Alice, every alert that referenced her — from either side — should
+    // be gone, not left dangling with a nulled relatedPersonId.
     const bobAlertsBefore = await repo.listOpenAlerts(bob.id);
     expect(bobAlertsBefore.length).toBeGreaterThan(0);
-    const alertPointingToAlice = bobAlertsBefore.find(
-      (a) => a.relatedPersonId === alice.id
-    );
-    expect(alertPointingToAlice).toBeDefined();
 
     await deletePersonAction(
       { personId: alice.id, reason: "duplicate" },
@@ -120,11 +120,6 @@ describe("deletePersonAction", () => {
     expect(stillPointing).toHaveLength(0);
 
     const bobAlertsAfter = await repo.listOpenAlerts(bob.id);
-    expect(bobAlertsAfter.length).toBeGreaterThan(0);
-    const sameAlertAfter = bobAlertsAfter.find(
-      (a) => a.id === alertPointingToAlice!.id
-    );
-    expect(sameAlertAfter).toBeDefined();
-    expect(sameAlertAfter!.relatedPersonId).toBeNull();
+    expect(bobAlertsAfter).toHaveLength(0);
   });
 });

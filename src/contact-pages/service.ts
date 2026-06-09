@@ -65,7 +65,7 @@ export function makeService(repo: Repo = defaultRepo) {
       throw new Error("no unassigned persons available in current season");
     }
 
-    const alertRows = await repo.findUnresolvedAlertsForPersons(candidateIds);
+    const alertRows = await repo.findOpenAlertsForPersons(candidateIds);
     const candidateSet = new Set(candidateIds);
 
     const pickedIds: string[] = [];
@@ -127,7 +127,7 @@ export function makeService(repo: Repo = defaultRepo) {
     const [personRows, phonesByPerson, allAlerts] = await Promise.all([
       repo.findPersonsByIds(personIds),
       repo.findPhonesForPersons(personIds),
-      repo.findUnresolvedAlertsForPersons(personIds),
+      repo.findOpenAlertsForPersons(personIds),
     ]);
 
     const linkedIds = new Set<string>();

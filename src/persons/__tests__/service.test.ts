@@ -157,7 +157,7 @@ describe("commitContacts", () => {
     expect(result.alerts).toHaveLength(0);
   });
 
-  test("homonyms with no ids -> insert + name_match_no_id warning", async () => {
+  test("homonyms with no ids -> insert silently, no alert (homonyms are real)", async () => {
     await seed({ id: null as any, fullname: "Alice", phone: ["0500000000"] });
     const repo = makeRepo(tdb.db);
     const result = await commitContacts(
@@ -166,8 +166,7 @@ describe("commitContacts", () => {
       repo
     );
     expect(result.inserted).toHaveLength(1);
-    expect(result.alerts).toHaveLength(1);
-    expect(result.alerts[0].kind).toBe("name_match_no_id");
+    expect(result.alerts).toHaveLength(0);
     expect(await tdb.db.select().from(persons)).toHaveLength(2);
   });
 
@@ -221,7 +220,7 @@ describe("commitContacts", () => {
     expect(await tdb.db.select().from(persons)).toHaveLength(2);
   });
 
-  test("intra-batch: two rows same name, no ids, different phones -> 2 persons + warning", async () => {
+  test("intra-batch: two rows same name, no ids, different phones -> 2 persons, no alert", async () => {
     const repo = makeRepo(tdb.db);
     const result = await commitContacts(
       [
@@ -232,8 +231,7 @@ describe("commitContacts", () => {
       repo
     );
     expect(result.inserted).toHaveLength(2);
-    expect(result.alerts).toHaveLength(1);
-    expect(result.alerts[0].kind).toBe("name_match_no_id");
+    expect(result.alerts).toHaveLength(0);
     expect(await tdb.db.select().from(persons)).toHaveLength(2);
   });
 

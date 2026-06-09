@@ -43,6 +43,13 @@
       "when": 1780865710411,
       "tag": "0005_reflective_hellion",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780948812597,
+      "tag": "0006_data_error_simplification",
+      "breakpoints": true
     }
   ]
 }

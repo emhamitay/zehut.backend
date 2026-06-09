@@ -1,6 +1,11 @@
 import type { NormalizedContact } from "./match";
 import { isValidPhone, normalizePhone } from "./normalize";
-import { repo as defaultRepo, type PersonWithPhones, type Repo } from "./repo";
+import {
+  repo as defaultRepo,
+  type AlertWithRelated,
+  type PersonWithPhones,
+  type Repo,
+} from "./repo";
 import type { AlertKind, AlertRow, PersonAuditRow } from "../db/schema";
 
 export type UpdatePersonInput = {
@@ -29,7 +34,7 @@ export type UpdateResult =
       ok: true;
       person: PersonWithPhones;
       audit: PersonAuditRow[];
-      resolvedAlerts: AlertRow[];
+      closedAlerts: AlertWithRelated[];
     }
   | { ok: false; conflicts: ConflictDetail[] }
   | { ok: false; notFound: true };
@@ -103,6 +108,10 @@ function fieldEqualsCaseInsensitive(
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
+// Only ID and phone collisions block a save. A name-only collision is
+// silent everywhere now — the modal that surfaces this conflict to the
+// user is going to point at the field whose unique constraint is being
+// violated, and that field is always nationalId or a phone.
 function describeConflict(
   other: PersonWithPhones,
   candidate: NormalizedContact,
@@ -122,13 +131,6 @@ function describeConflict(
   );
 
   const mismatchedFields: MismatchedField[] = [];
-  if (
-    candidate.nationalId &&
-    other.nationalId &&
-    candidate.nationalId !== other.nationalId
-  ) {
-    mismatchedFields.push("id");
-  }
   if (
     candidate.fullname &&
     other.fullname &&
@@ -150,9 +152,9 @@ function describeConflict(
     kind = "id_mismatch_name_phone_match";
   } else if (phoneMatches) {
     kind = "phone_match_name_differs_no_id";
-  } else if (nameMatches) {
-    kind = "name_match_no_id";
   } else {
+    // No id match and no phone match means this candidate just shares a
+    // name with `other` — not a blocking collision.
     kind = "cross_person_mismatch";
   }
 
@@ -182,44 +184,95 @@ function fieldStillMismatched(
   return a.trim().toLowerCase() !== b.trim().toLowerCase();
 }
 
-async function reEvaluateOpenAlerts(
+// After a successful PATCH we walk every alert that touches this person
+// (symmetrically — either side) and ask: is the collision recorded in the
+// alert still true against the current DB? If not, delete the alert and
+// record an `alert_closed` audit row so there's a breadcrumb that this
+// person used to have a data error.
+//
+// We use the live DB state (the other person's current fields) rather
+// than the snapshotted `incoming` payload, because the other side may
+// have been edited too. This is the "re-check against the whole DB"
+// behaviour the plan specifies.
+async function closeResolvedAlerts(
   repo: Repo,
   person: PersonWithPhones,
-  userId: string
-): Promise<AlertRow[]> {
+  userId: string,
+  reason: string | null
+): Promise<{ closed: AlertRow[]; audit: PersonAuditRow[] }> {
   const open = await repo.listOpenAlerts(person.id);
-  if (open.length === 0) return [];
+  if (open.length === 0) return { closed: [], audit: [] };
   const personNormalized = new Set(
     person.phones.map((raw) => normalizePhone(raw))
   );
-  const resolved: AlertRow[] = [];
+  const closed: AlertRow[] = [];
+  const auditPayloads: {
+    personId: string;
+    userId: string;
+    field: "alert_closed";
+    oldValue: string | null;
+    newValue: string | null;
+    reason: string | null;
+  }[] = [];
   for (const alert of open) {
-    const incoming = alert.details.incoming;
-    const fields = alert.details.mismatchedFields;
-    let anyStillMismatched = false;
-    if (fields.includes("name")) {
-      if (fieldStillMismatched(person.fullname, incoming.fullname)) {
-        anyStillMismatched = true;
+    const other = alert.relatedPerson;
+    let stillColliding = false;
+
+    if (other) {
+      const otherPhonesNormalized = new Set(
+        other.phones.map((raw) => normalizePhone(raw))
+      );
+      const idMatches =
+        !!person.nationalId &&
+        !!other.nationalId &&
+        person.nationalId === other.nationalId;
+      const phoneOverlap = [...personNormalized].some((n) =>
+        otherPhonesNormalized.has(n)
+      );
+      stillColliding = idMatches || phoneOverlap;
+    } else {
+      // Symmetric alert with a dangling related person (deleted, or the
+      // alert references a snapshot only). Fall back to the snapshotted
+      // incoming payload — if any field the alert flagged still matches
+      // the other side's recorded value, keep the alert.
+      const incoming = alert.details.incoming;
+      const fields = alert.details.mismatchedFields;
+      if (fields.includes("id")) {
+        if (fieldStillMismatched(person.nationalId, incoming.id)) {
+          stillColliding = true;
+        }
+      }
+      if (fields.includes("phone")) {
+        const incomingNormalized = (incoming.phone ?? []).map(normalizePhone);
+        const stillOverlapsNone =
+          incomingNormalized.length > 0 &&
+          !incomingNormalized.some((n) => personNormalized.has(n));
+        if (stillOverlapsNone) stillColliding = true;
       }
     }
-    if (fields.includes("id")) {
-      if (fieldStillMismatched(person.nationalId, incoming.id)) {
-        anyStillMismatched = true;
+
+    if (!stillColliding) {
+      const r = await repo.deleteAlert(alert.id);
+      if (r) {
+        closed.push(r);
+        auditPayloads.push({
+          personId: person.id,
+          userId,
+          field: "alert_closed",
+          oldValue: null,
+          newValue: JSON.stringify({
+            alertId: r.id,
+            kind: r.kind,
+            otherPersonId:
+              r.personId === person.id ? r.relatedPersonId : r.personId,
+          }),
+          reason,
+        });
       }
-    }
-    if (fields.includes("phone")) {
-      const incomingNormalized = (incoming.phone ?? []).map(normalizePhone);
-      const stillOverlapsNone =
-        incomingNormalized.length > 0 &&
-        !incomingNormalized.some((n) => personNormalized.has(n));
-      if (stillOverlapsNone) anyStillMismatched = true;
-    }
-    if (!anyStillMismatched) {
-      const r = await repo.resolveAlert(alert.id, userId);
-      if (r) resolved.push(r);
     }
   }
-  return resolved;
+  const audit = await repo.insertAuditRows(auditPayloads);
+  return { closed, audit };
 }
 
 export async function updatePerson(
@@ -248,6 +301,10 @@ export async function updatePerson(
     removeNormalized
   );
 
+  // Re-check against the whole DB on every save: any other person who
+  // shares the candidate's nationalId or any candidate phone is a blocker.
+  // Names are NOT a uniqueness-bearing field — a coordinator may share a
+  // name with another citizen and that's fine.
   const byId = candidate.nationalId
     ? await repo.findOtherByNationalId(candidate.nationalId, current.id)
     : null;
@@ -258,12 +315,9 @@ export async function updatePerson(
           current.id
         )
       : [];
-  const byName = candidate.fullname
-    ? await repo.findOtherByFullname(candidate.fullname, current.id)
-    : [];
 
   const others = dedupeById(
-    [byId, ...byPhone, ...byName].filter(
+    [byId, ...byPhone].filter(
       (c): c is PersonWithPhones => c !== null && c.id !== current.id
     )
   );
@@ -290,7 +344,13 @@ export async function updatePerson(
   const auditRows: {
     personId: string;
     userId: string;
-    field: "nationalId" | "fullname" | "phone_added" | "phone_removed" | "merged_from";
+    field:
+      | "nationalId"
+      | "fullname"
+      | "phone_added"
+      | "phone_removed"
+      | "merged_from"
+      | "alert_closed";
     oldValue: string | null;
     newValue: string | null;
     reason: string | null;
@@ -370,7 +430,21 @@ export async function updatePerson(
   const audit = await repo.insertAuditRows(auditRows);
 
   const refreshed = (await repo.findById(current.id))!;
-  const resolvedAlerts = await reEvaluateOpenAlerts(repo, refreshed, userId);
+  const { closed, audit: closeAudit } = await closeResolvedAlerts(
+    repo,
+    refreshed,
+    userId,
+    reason
+  );
+  // Enrich for the API: each closed alert ships with its relatedPerson
+  // (still in the DB at this point) and its derived errorType, matching
+  // the shape of openAlerts.
+  const closedAlerts = await repo.attachRelatedPersons(closed);
 
-  return { ok: true, person: refreshed, audit, resolvedAlerts };
+  return {
+    ok: true,
+    person: refreshed,
+    audit: [...audit, ...closeAudit],
+    closedAlerts,
+  };
 }

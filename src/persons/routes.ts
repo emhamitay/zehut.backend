@@ -146,7 +146,10 @@ export function personsRoutes(auth: AuthService) {
             set.status = 404;
             return { error: "not_found" };
           }
-          set.status = 409;
+          // 422 (not 409) — the client sent a syntactically valid PATCH
+          // but its semantics violate a uniqueness rule. The frontend
+          // surfaces this as the save-error modal.
+          set.status = 422;
           return { ok: false, conflicts: result.conflicts };
         }
         return result;

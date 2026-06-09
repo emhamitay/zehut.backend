@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, notExists, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notExists, or, sql } from "drizzle-orm";
 import { db as defaultDb, type Database } from "../db/client";
 import {
   alerts,
@@ -71,7 +71,11 @@ export function makeRepo(database: Database = defaultDb) {
     return out;
   }
 
-  async function findUnresolvedAlertsForPersons(
+  // Live alerts only — the table no longer carries a resolvedAt column,
+  // an alert row exists iff the collision is still true. Symmetric on
+  // either side so the sheet sees errors regardless of which side of
+  // the alert this citizen is.
+  async function findOpenAlertsForPersons(
     ids: string[]
   ): Promise<AlertRow[]> {
     if (ids.length === 0) return [];
@@ -79,12 +83,9 @@ export function makeRepo(database: Database = defaultDb) {
       .select()
       .from(alerts)
       .where(
-        and(
-          isNull(alerts.resolvedAt),
-          or(
-            inArray(alerts.personId, ids),
-            inArray(alerts.relatedPersonId, ids)
-          )
+        or(
+          inArray(alerts.personId, ids),
+          inArray(alerts.relatedPersonId, ids)
         )
       );
   }
@@ -190,7 +191,7 @@ export function makeRepo(database: Database = defaultDb) {
     findUnassignedPersonIds,
     findPersonsByIds,
     findPhonesForPersons,
-    findUnresolvedAlertsForPersons,
+    findOpenAlertsForPersons,
     findAssignmentsForPersons,
     insertPageWithEntries,
     listPagesForUser,
