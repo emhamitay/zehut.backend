@@ -127,6 +127,7 @@ CONTACT_PAGE_PAIR_ROWS=3
 | `bun run db:push` | Apply the current Drizzle schema directly to the DB. Use this in dev after editing `src/db/schema.ts`. |
 | `bun run db:generate` | Generate a new SQL migration file from the current schema. Use when you want a tracked migration. |
 | `bun run db:migrate` | Apply pending migrations to the DB. |
+| `bun run db:clear` | Clear the database and reapply the schema (when using Docker). |
 | `bun run db:studio` | Open Drizzle Studio to browse the tables. |
 | `bun run dev` | Start the API (`http://localhost:4000`) with file watching. |
 | `bun test` | Run the test suite. |
