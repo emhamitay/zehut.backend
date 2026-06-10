@@ -97,13 +97,15 @@ Updates and merges re-evaluate open alerts and **auto-resolve** any whose underl
 Create a `.env` file (never commit it):
 
 ```env
-# LLM extraction (required for /api/extract)
+# LLM extraction (currently required at startup)
 OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=...
 # OPENROUTER_BASE_URL=https://openrouter.ai/api/v1   # optional
 # OPENROUTER_SYSTEM_PROMPT=...                        # optional override
 
-# Database — optional; defaults to the local docker Postgres
+# Database
+# IMPORTANT: docker-compose maps Postgres to localhost:5433.
+# Set DATABASE_URL explicitly so both the app and Drizzle use the same DB.
 DATABASE_URL=postgres://postgres:postgres@localhost:5433/zehut
 
 # Auth
@@ -117,6 +119,11 @@ CURRENT_SEASON=2026
 CONTACT_PAGE_ROWS=25
 CONTACT_PAGE_PAIR_ROWS=3
 ```
+
+Notes:
+
+- `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` are currently required for boot because the OpenRouter client validates env vars during module initialization.
+- If `DATABASE_URL` is omitted, app runtime code falls back to `localhost:5432` while local Docker uses `localhost:5433`.
 
 ## Scripts
 
@@ -141,6 +148,12 @@ bun run db:push     # applies the schema
 bun run dev         # starts the API
 ```
 
+Then verify the API is up:
+
+```bash
+curl http://localhost:4000/
+```
+
 After that, day-to-day you typically only need:
 
 ```bash
@@ -149,6 +162,15 @@ bun run dev
 ```
 
 Re-run `bun run db:push` whenever you change `src/db/schema.ts`.
+
+## Troubleshooting setup
+
+- `Error: OPENROUTER_API_KEY is not set` or `OPENROUTER_MODEL is not set`:
+	Add both values to `.env` before running `bun run dev`.
+- DB connection failures to `localhost:5432`:
+	Set `DATABASE_URL=postgres://postgres:postgres@localhost:5433/zehut` in `.env`.
+- `CURRENT_SEASON is not set` when generating contact pages:
+	Add `CURRENT_SEASON` to `.env`.
 
 ## Switching to a hosted Postgres (Neon, Supabase, etc.)
 
