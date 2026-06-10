@@ -134,7 +134,7 @@ describe("searchPersons", () => {
       repo
     );
     await commitContacts(
-      [{ id: "111", fullname: "Alicia", phone: ["0500000001"] }],
+      [{ id: "111", fullname: "Alicia", phone: ["0500000002"] }],
       "x.xlsx",
       repo
     );
@@ -146,7 +146,11 @@ describe("searchPersons", () => {
       },
       repo
     );
-    expect(r.hits).toHaveLength(1);
-    expect(r.hits[0].openAlertCount).toBeGreaterThan(0);
+    // National ID is no longer unique: searching by ID surfaces both
+    // colliding citizens, and each carries the symmetric data-error.
+    expect(r.hits).toHaveLength(2);
+    for (const hit of r.hits) {
+      expect(hit.openAlertCount).toBeGreaterThan(0);
+    }
   });
 });

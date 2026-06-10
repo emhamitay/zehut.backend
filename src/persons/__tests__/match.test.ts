@@ -42,7 +42,7 @@ function phoneMap(...persons: PersonWithPhones[]): Map<string, string> {
 describe("decide", () => {
   test("clean new -> insert with no alerts", () => {
     const c = makeContact();
-    const d = decide(c, null, [], [], new Map());
+    const d = decide(c, [], [], [], new Map());
     expect(d.kind).toBe("insert");
     if (d.kind === "insert") expect(d.alerts).toEqual([]);
   });
@@ -50,7 +50,7 @@ describe("decide", () => {
   test("exact match (id+name+phone) -> noop", () => {
     const p = makePerson();
     const c = makeContact();
-    const d = decide(c, p, [], [], phoneMap(p));
+    const d = decide(c, [p], [], [], phoneMap(p));
     expect(d.kind).toBe("noop");
   });
 
@@ -59,40 +59,49 @@ describe("decide", () => {
     const c = makeContact({
       phones: [{ raw: "0511111111", normalized: "0511111111" }],
     });
-    const d = decide(c, p, [], [], phoneMap(p));
+    const d = decide(c, [p], [], [], phoneMap(p));
     expect(d.kind).toBe("add_phones");
     if (d.kind === "add_phones") expect(d.alerts).toEqual([]);
   });
 
-  test("id+phone match, name differs -> alert_only (case 4)", () => {
-    const p = makePerson({ fullname: "Alice" });
+  test("same id, name differs -> insert + symmetric name_mismatch_on_id (case 4)", () => {
+    // National ID is no longer unique. Same ID + different name is a typo
+    // we surface as a symmetric alert, inserting the incoming row as its
+    // own citizen rather than merging it away.
+    const p = makePerson({ id: "person-A", fullname: "Alice" });
     const c = makeContact({ fullname: "Bob" });
-    const d = decide(c, p, [], [], phoneMap(p));
-    expect(d.kind).toBe("alert_only");
-    if (d.kind === "alert_only") {
+    const d = decide(c, [p], [], [], phoneMap(p));
+    expect(d.kind).toBe("insert");
+    if (d.kind === "insert") {
       expect(d.alerts).toHaveLength(1);
       expect(d.alerts[0].kind).toBe("name_mismatch_on_id");
+      expect(d.alerts[0].relatedPersonId).toBe("person-A");
     }
   });
 
-  test("id matches, name+phone differ -> add_phones + alert (case 6)", () => {
-    const p = makePerson({ fullname: "Alice", phones: ["0500000000"] });
+  test("same id, name+phone differ -> insert + symmetric alert (case 6)", () => {
+    const p = makePerson({
+      id: "person-A",
+      fullname: "Alice",
+      phones: ["0500000000"],
+    });
     const c = makeContact({
       fullname: "Bob",
       phones: [{ raw: "0511111111", normalized: "0511111111" }],
     });
-    const d = decide(c, p, [], [], phoneMap(p));
-    expect(d.kind).toBe("add_phones");
-    if (d.kind === "add_phones") {
+    const d = decide(c, [p], [], [], phoneMap(p));
+    expect(d.kind).toBe("insert");
+    if (d.kind === "insert") {
       expect(d.alerts).toHaveLength(1);
-      expect(d.alerts[0].kind).toBe("name_phone_mismatch_on_id");
+      expect(d.alerts[0].kind).toBe("name_mismatch_on_id");
+      expect(d.alerts[0].relatedPersonId).toBe("person-A");
     }
   });
 
   test("phone+name match, id differs -> insert + alert (case 1)", () => {
     const p = makePerson({ nationalId: "999" });
     const c = makeContact({ nationalId: "111" });
-    const d = decide(c, null, [p], [p], phoneMap(p));
+    const d = decide(c, [], [p], [p], phoneMap(p));
     expect(d.kind).toBe("insert");
     if (d.kind === "insert") {
       expect(d.alerts).toHaveLength(1);
@@ -104,7 +113,7 @@ describe("decide", () => {
   test("phone match, id+name differ -> insert + alert (cases 2/5)", () => {
     const p = makePerson({ nationalId: "999", fullname: "Alice" });
     const c = makeContact({ nationalId: "111", fullname: "Bob" });
-    const d = decide(c, null, [p], [], phoneMap(p));
+    const d = decide(c, [], [p], [], phoneMap(p));
     expect(d.kind).toBe("insert");
     if (d.kind === "insert") {
       expect(d.alerts).toHaveLength(1);
@@ -123,7 +132,7 @@ describe("decide", () => {
       fullname: "Alice",
       phones: [{ raw: "0511111111", normalized: "0511111111" }],
     });
-    const d = decide(c, null, [], [p], phoneMap(p));
+    const d = decide(c, [], [], [p], phoneMap(p));
     expect(d.kind).toBe("insert");
     if (d.kind === "insert") expect(d.alerts).toEqual([]);
   });
@@ -137,7 +146,7 @@ describe("decide", () => {
       fullname: null,
       phones: [{ raw: "0500000000", normalized: "0500000000" }],
     };
-    const d = decide(c, p, [], [], phoneMap(p));
+    const d = decide(c, [p], [], [], phoneMap(p));
     expect(d.kind).toBe("noop");
   });
 
@@ -149,7 +158,7 @@ describe("decide", () => {
       fullname: null,
       phones: [{ raw: "0511111111", normalized: "0511111111" }],
     };
-    const d = decide(c, p, [], [], phoneMap(p));
+    const d = decide(c, [p], [], [], phoneMap(p));
     expect(d.kind).toBe("add_phones");
     if (d.kind === "add_phones") expect(d.alerts).toEqual([]);
   });
@@ -168,7 +177,7 @@ describe("decide", () => {
       fullname: "Alice",
       phones: [{ raw: "0511111111", normalized: "0511111111" }],
     };
-    const d = decide(c, null, [], [p], phoneMap(p));
+    const d = decide(c, [], [], [p], phoneMap(p));
     expect(d.kind).toBe("insert");
     if (d.kind === "insert") expect(d.alerts).toEqual([]);
   });
@@ -185,7 +194,7 @@ describe("decide", () => {
       fullname: "Alice",
       phones: [{ raw: "0511111111", normalized: "0511111111" }],
     });
-    const d = decide(c, null, [], [p], phoneMap(p));
+    const d = decide(c, [], [], [p], phoneMap(p));
     expect(d.kind).toBe("insert");
     if (d.kind === "insert") expect(d.alerts).toEqual([]);
   });
@@ -204,7 +213,7 @@ describe("decide", () => {
         { raw: "0511111111", normalized: "0511111111" },
       ],
     };
-    const d = decide(c, null, [p], [p], phoneMap(p));
+    const d = decide(c, [], [p], [p], phoneMap(p));
     expect(d.kind).toBe("add_phones");
     if (d.kind === "add_phones") {
       expect(d.alerts).toEqual([]);
@@ -222,7 +231,7 @@ describe("decide", () => {
       fullname: "Alice",
       phones: [{ raw: "0500000000", normalized: "0500000000" }],
     });
-    const d = decide(c, null, [p], [p], phoneMap(p));
+    const d = decide(c, [], [p], [p], phoneMap(p));
     expect(d.kind).toBe("backfill_id_and_add_phones");
     if (d.kind === "backfill_id_and_add_phones") {
       expect(d.nationalId).toBe("111");
@@ -242,7 +251,7 @@ describe("decide", () => {
       fullname: "Bob",
       phones: [{ raw: "0500000000", normalized: "0500000000" }],
     };
-    const d = decide(c, null, [p], [], phoneMap(p));
+    const d = decide(c, [], [p], [], phoneMap(p));
     expect(d.kind).toBe("insert");
     if (d.kind === "insert") {
       expect(d.alerts).toHaveLength(1);
@@ -260,7 +269,7 @@ describe("decide", () => {
       fullname: "Alice",
       phones: [{ raw: "0511111111", normalized: "0511111111" }],
     });
-    const d = decide(c, a, [b], [], phoneMap(a, b));
+    const d = decide(c, [a], [b], [], phoneMap(a, b));
     expect(d.kind).toBe("add_phones");
     if (d.kind === "add_phones") {
       const kinds = d.alerts.map((a) => a.kind);

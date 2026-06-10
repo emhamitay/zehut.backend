@@ -31,12 +31,7 @@ export type Decision =
       nationalId: string;
       alerts: AlertSpec[];
     }
-  | { kind: "insert"; alerts: AlertSpec[] }
-  | {
-      kind: "alert_only";
-      person: PersonWithPhones;
-      alerts: AlertSpec[];
-    };
+  | { kind: "insert"; alerts: AlertSpec[] };
 
 // Tri-state field comparison: a missing value (null/empty) is "unknown",
 // not a mismatch. Two non-null values are "match" or "mismatch".
@@ -47,21 +42,9 @@ function cmpField(a: string | null, b: string | null): FieldCmp {
   return a.trim().toLowerCase() === b.trim().toLowerCase() ? "match" : "mismatch";
 }
 
-function phoneOverlap(
-  person: PersonWithPhones,
-  normalized: string[],
-  rawPhonesNormalized: Map<string, string>
-): boolean {
-  if (normalized.length === 0) return false;
-  const personNumbers = new Set(
-    person.phones.map((raw) => rawPhonesNormalized.get(raw) ?? raw)
-  );
-  return normalized.some((n) => personNumbers.has(n));
-}
-
 export function decide(
   incoming: NormalizedContact,
-  byId: PersonWithPhones | null,
+  byIds: PersonWithPhones[],
   byPhone: PersonWithPhones[],
   byName: PersonWithPhones[],
   // The repo stores `raw` on PersonWithPhones.phones; we need to compare on
@@ -70,72 +53,79 @@ export function decide(
 ): Decision {
   const incomingNormalized = incoming.phones.map((p) => p.normalized);
 
-  // Case: id matches an existing person
-  if (byId) {
-    const nameCmp = cmpField(byId.fullname, incoming.fullname);
-    const phoneM = phoneOverlap(byId, incomingNormalized, phoneNormalizedByRaw);
+  // Case: id matches one or more existing persons. National ID is not
+  // unique — two import rows with the same ID and different names are
+  // treated as two citizens and flagged with a symmetric data-error.
+  if (byIds.length > 0) {
+    // Pick a merge target: an existing same-ID person whose name does NOT
+    // actively conflict with the incoming row — a name match, or a row
+    // where either side's name is missing (an "unknown" comparison is not
+    // a conflict). Same ID + no active name conflict is the same person,
+    // so we merge and add phones. Only when EVERY same-ID person's name
+    // actively differs do we insert the incoming row as its own citizen.
+    const target =
+      byIds.find((p) => cmpField(p.fullname, incoming.fullname) === "match") ??
+      byIds.find((p) => cmpField(p.fullname, incoming.fullname) === "unknown") ??
+      null;
 
-    // Cross-person alert: a different person owns one of the incoming phones
+    // Every same-ID person whose name actively differs from the incoming
+    // row (and isn't the merge target) is the related side of a symmetric
+    // name_mismatch_on_id alert.
+    const sameIdAlerts: AlertSpec[] = byIds
+      .filter(
+        (p) =>
+          p.id !== target?.id &&
+          cmpField(p.fullname, incoming.fullname) === "mismatch"
+      )
+      .map((p) => ({
+        kind: "name_mismatch_on_id" as AlertKind,
+        relatedPersonId: p.id,
+        details: { matchedOn: "id" as MatchedOn, mismatchedFields: ["name"] },
+      }));
+
+    // Cross-person alert: a different person owns one of the incoming
+    // phones. "Different" = not the merge target and not a same-ID person
+    // (those are already covered by the id collision above).
     const crossPersonAlerts: AlertSpec[] = [];
     for (const p of byPhone) {
-      if (p.id !== byId.id) {
-        crossPersonAlerts.push({
-          kind: "cross_person_mismatch",
-          relatedPersonId: p.id,
-          details: { matchedOn: "id", mismatchedFields: ["id"] },
-        });
-      }
+      if (p.id === target?.id) continue;
+      if (byIds.some((b) => b.id === p.id)) continue;
+      crossPersonAlerts.push({
+        kind: "cross_person_mismatch",
+        relatedPersonId: p.id,
+        details: { matchedOn: "id", mismatchedFields: ["id"] },
+      });
     }
 
-    const existingNumbers = byId.phones.map(
+    if (!target) {
+      // No same-ID person to merge into → insert a new citizen carrying
+      // every symmetric id-collision and cross-person alert.
+      return {
+        kind: "insert",
+        alerts: [...sameIdAlerts, ...crossPersonAlerts],
+      };
+    }
+
+    // We have a merge target. Add new phones, plus any symmetric alerts
+    // against other same-ID rows whose names differ.
+    const existingNumbers = target.phones.map(
       (raw) => phoneNormalizedByRaw.get(raw) ?? raw
     );
     const hasNewPhones = incomingNormalized.some(
       (n) => !existingNumbers.includes(n)
     );
-
-    // Only a populated-on-both-sides difference counts as a name conflict.
-    if (nameCmp === "mismatch") {
-      if (phoneM && !hasNewPhones) {
-        // id+phone match, name differs, no new phones -> alert_only
-        return {
-          kind: "alert_only",
-          person: byId,
-          alerts: [
-            {
-              kind: "name_mismatch_on_id",
-              details: { matchedOn: "id", mismatchedFields: ["name"] },
-            },
-            ...crossPersonAlerts,
-          ],
-        };
-      }
-      // name conflict + (phone overlaps with new phones OR no phone overlap)
-      const kind: AlertKind = phoneM
-        ? "name_mismatch_on_id"
-        : "name_phone_mismatch_on_id";
-      const mismatchedFields: MismatchedField[] = phoneM
-        ? ["name"]
-        : ["name", "phone"];
+    if (
+      hasNewPhones ||
+      crossPersonAlerts.length > 0 ||
+      sameIdAlerts.length > 0
+    ) {
       return {
         kind: "add_phones",
-        person: byId,
-        alerts: [
-          { kind, details: { matchedOn: "id", mismatchedFields } },
-          ...crossPersonAlerts,
-        ],
+        person: target,
+        alerts: [...sameIdAlerts, ...crossPersonAlerts],
       };
     }
-
-    // No name conflict (match or unknown). Merge: add new phones if any.
-    if (hasNewPhones || crossPersonAlerts.length > 0) {
-      return {
-        kind: "add_phones",
-        person: byId,
-        alerts: crossPersonAlerts,
-      };
-    }
-    return { kind: "noop", person: byId };
+    return { kind: "noop", person: target };
   }
 
   // No id match. Try phone next.

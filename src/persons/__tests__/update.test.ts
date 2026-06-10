@@ -95,22 +95,25 @@ describe("updatePerson", () => {
 
   test("deletes an open alert whose cause is fixed and records an alert_closed audit row", async () => {
     const repo = makeRepo(tdb.db);
+    // Two rows with the same ID and different names -> two citizens plus
+    // a symmetric id_data_error alert. The collision is the shared ID;
+    // fixing it means changing one side's national ID.
     await commitContacts(
-      [{ id: "111", fullname: "Alice", phone: ["0500000000"] }],
+      [
+        { id: "111", fullname: "Alice", phone: ["0500000001"] },
+        { id: "111", fullname: "Bob", phone: ["0500000002"] },
+      ],
       "seed.xlsx",
       repo
     );
-    await commitContacts(
-      [{ id: "111", fullname: "Alicia", phone: ["0500000000"] }],
-      "second.xlsx",
-      repo
-    );
-    const person = (await repo.findByNationalId("111"))!;
-    let openBefore = await repo.listOpenAlerts(person.id);
+    const both = await repo.findAllByNationalId("111");
+    expect(both).toHaveLength(2);
+    const bob = both.find((p) => p.fullname === "Bob")!;
+    let openBefore = await repo.listOpenAlerts(bob.id);
     expect(openBefore.length).toBeGreaterThan(0);
 
     const result = await updatePerson(
-      { personId: person.id, fullname: "Alicia", reason: "called, correct name is Alicia" },
+      { personId: bob.id, nationalId: "222", reason: "typo in ID, correct is 222" },
       userId,
       repo
     );
@@ -124,7 +127,7 @@ describe("updatePerson", () => {
     );
     expect(closedAuditRows.length).toBe(result.closedAlerts.length);
 
-    const openAfter = await repo.listOpenAlerts(person.id);
+    const openAfter = await repo.listOpenAlerts(bob.id);
     expect(openAfter).toHaveLength(0);
   });
 

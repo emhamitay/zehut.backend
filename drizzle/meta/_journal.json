@@ -50,6 +50,13 @@
       "when": 1780948812597,
       "tag": "0006_data_error_simplification",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781120884231,
+      "tag": "0007_relax_national_id_unique",
+      "breakpoints": true
     }
   ]
 }

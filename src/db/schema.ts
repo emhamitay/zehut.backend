@@ -17,18 +17,28 @@ export type AlertDetails = {
   incoming: Contact;
 };
 
-export const persons = pgTable("persons", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  nationalId: text("national_id").unique(),
-  fullname: text("fullname"),
-  sourceFile: text("source_file"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+// national_id is intentionally NOT unique. Two import rows with the same
+// ID and different names are treated as two separate citizens and the
+// collision is surfaced as a symmetric data-error alert — same shape as
+// a phone collision. Coordinators resolve the typo manually.
+export const persons = pgTable(
+  "persons",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    nationalId: text("national_id"),
+    fullname: text("fullname"),
+    sourceFile: text("source_file"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    nationalIdIdx: index("persons_national_id_idx").on(t.nationalId),
+  })
+);
 
 export const phones = pgTable(
   "phones",

@@ -68,7 +68,7 @@ describe("commitContacts", () => {
     expect(allPersons).toHaveLength(1);
   });
 
-  test("case 4: id+phone match, name differs -> alert_only", async () => {
+  test("case 4: same id, name differs -> insert second person + symmetric alert", async () => {
     await seed(contact({ fullname: "Alice", phone: ["0500000000"] }));
     const repo = makeRepo(tdb.db);
     const result = await commitContacts(
@@ -76,18 +76,18 @@ describe("commitContacts", () => {
       "file.xlsx",
       repo
     );
-    expect(result.inserted).toHaveLength(0);
-    expect(result.phoneAdded).toHaveLength(0);
-    expect(result.ignored).toBe(1);
+    // National ID is no longer unique: the conflicting row becomes its
+    // own citizen, and the collision is a symmetric data-error alert.
+    expect(result.inserted).toHaveLength(1);
     expect(result.alerts).toHaveLength(1);
     expect(result.alerts[0].kind).toBe("name_mismatch_on_id");
+    expect(result.alerts[0].relatedPersonId).not.toBeNull();
 
     const allPersons = await tdb.db.select().from(persons);
-    expect(allPersons).toHaveLength(1);
-    expect(allPersons[0].fullname).toBe("Alice"); // unchanged
+    expect(allPersons).toHaveLength(2);
   });
 
-  test("case 6: id matches, name+phone differ -> add_phones + alert", async () => {
+  test("case 6: same id, name+phone differ -> insert second person + symmetric alert", async () => {
     await seed(contact({ fullname: "Alice", phone: ["0500000000"] }));
     const repo = makeRepo(tdb.db);
     const result = await commitContacts(
@@ -95,9 +95,13 @@ describe("commitContacts", () => {
       "file.xlsx",
       repo
     );
-    expect(result.phoneAdded).toHaveLength(1);
+    expect(result.inserted).toHaveLength(1);
     expect(result.alerts).toHaveLength(1);
-    expect(result.alerts[0].kind).toBe("name_phone_mismatch_on_id");
+    expect(result.alerts[0].kind).toBe("name_mismatch_on_id");
+    expect(result.alerts[0].relatedPersonId).not.toBeNull();
+
+    const allPersons = await tdb.db.select().from(persons);
+    expect(allPersons).toHaveLength(2);
   });
 
   test("case 1: id mismatch, name+phone match -> insert + alert", async () => {
@@ -249,11 +253,10 @@ describe("commitContacts", () => {
     expect(rows[0].sourceFile).toBe("file.xlsx");
   });
 
-  test("same ID, different name: alert exposes the shared ID + incoming name (no live related person)", async () => {
-    // National ID is unique, so two import rows with the same ID merge
-    // into one person. The conflicting row has no person record — it
-    // lives only in details.incoming. The alert must still surface a
-    // usable collidingValue (the shared ID) so the UI never shows "—".
+  test("same ID, different name: two citizens + symmetric alert visible from both sides", async () => {
+    // National ID is no longer unique. The two import rows are two
+    // separate citizens; the collision is a symmetric data-error alert
+    // that each citizen sees with the *other* as relatedPerson.
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
@@ -263,18 +266,59 @@ describe("commitContacts", () => {
       "file.xlsx",
       repo
     );
-    const person = (await repo.findByNationalId("333444555"))!;
-    expect(person.fullname).toBe("רבקה הרצוג");
 
-    const open = await repo.listOpenAlerts(person.id);
-    expect(open.length).toBeGreaterThan(0);
-    const a = open[0];
-    expect(a.errorType).toBe("id_data_error");
-    // No second person exists for a same-ID merge.
-    expect(a.relatedPerson).toBeNull();
-    // The shared ID is surfaced for display instead of null.
-    expect(a.collidingValue).toBe("333444555");
-    // The conflicting name is preserved in the snapshot for the UI to show.
-    expect(a.details.incoming.fullname).toBe("דבורה הרצוג");
+    const both = await repo.findAllByNationalId("333444555");
+    expect(both).toHaveLength(2);
+    const rivka = both.find((p) => p.fullname === "רבקה הרצוג")!;
+    const dvora = both.find((p) => p.fullname === "דבורה הרצוג")!;
+    expect(rivka).toBeDefined();
+    expect(dvora).toBeDefined();
+
+    // From רבקה's side: the other person is דבורה.
+    const rivkaAlerts = await repo.listOpenAlerts(rivka.id);
+    expect(rivkaAlerts).toHaveLength(1);
+    expect(rivkaAlerts[0].errorType).toBe("id_data_error");
+    expect(rivkaAlerts[0].collidingValue).toBe("333444555");
+    expect(rivkaAlerts[0].relatedPerson?.id).toBe(dvora.id);
+
+    // From דבורה's side: the same alert, mirrored.
+    const dvoraAlerts = await repo.listOpenAlerts(dvora.id);
+    expect(dvoraAlerts).toHaveLength(1);
+    expect(dvoraAlerts[0].id).toBe(rivkaAlerts[0].id);
+    expect(dvoraAlerts[0].relatedPerson?.id).toBe(rivka.id);
+  });
+
+  test("full upload with two same-ID pairs -> 2 extra citizens, 2 symmetric id alerts", async () => {
+    // Reproduces the user's file: ten clean rows plus two same-ID pairs.
+    const repo = makeRepo(tdb.db);
+    const rows: Contact[] = [
+      { id: "100000001", fullname: "אבי כהן", phone: ["0501000001"] },
+      { id: "100000002", fullname: "בני לוי", phone: ["0501000002"] },
+      { id: "100000003", fullname: "גילה מזרחי", phone: ["0501000003"] },
+      { id: "100000004", fullname: "דנה פרץ", phone: ["0501000004"] },
+      { id: "100000005", fullname: "הראל ביטון", phone: ["0501000005"] },
+      { id: "100000006", fullname: "ורד אדרי", phone: ["0501000006"] },
+      // same-ID pair #1
+      { id: "333444555", fullname: "רבקה הרצוג", phone: ["0533334445"] },
+      { id: "333444555", fullname: "דבורה הרצוג", phone: ["0533334446"] },
+      // same-ID pair #2
+      { id: "777888999", fullname: "משה ויינברג", phone: ["0577788899"] },
+      { id: "777888999", fullname: "יצחק ויינברג", phone: ["0577788900"] },
+    ];
+    const result = await commitContacts(rows, "file.xlsx", repo);
+
+    // 10 rows in, all distinct people -> 10 persons total.
+    const allPersons = await tdb.db.select().from(persons);
+    expect(allPersons).toHaveLength(10);
+    expect(result.inserted).toHaveLength(10);
+
+    // Exactly two collisions, both id_data_error.
+    expect(result.alerts).toHaveLength(2);
+    for (const a of result.alerts) {
+      expect(a.errorType).toBe("id_data_error");
+      expect(a.relatedPersonId).not.toBeNull();
+    }
+    const collidingIds = result.alerts.map((a) => a.collidingValue).sort();
+    expect(collidingIds).toEqual(["333444555", "777888999"]);
   });
 });
