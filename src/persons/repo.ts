@@ -38,23 +38,50 @@ export type AlertWithRelated = AlertRow & {
 };
 
 function computeCollidingValue(
-  kind: AlertKind,
+  row: AlertRow,
   viewer: PersonWithPhones | null,
   other: PersonWithPhones | null
 ): string | null {
-  if (!other) return null;
+  const kind = row.kind;
+  const incoming = row.details.incoming;
   const errorType = dataErrorTypeFromAlertKind(kind);
+
   if (errorType === "id_data_error") {
-    return other.nationalId ?? viewer?.nationalId ?? null;
+    // The colliding (shared) value is the national ID. When there's a
+    // real related person, both carry it. When there isn't — the common
+    // same-ID import case, where the two rows merged into one person and
+    // the conflicting row lives only in the snapshot — fall back to the
+    // viewer's own ID (which equals the incoming ID that collided).
+    return (
+      other?.nationalId ?? viewer?.nationalId ?? incoming?.id ?? null
+    );
   }
-  if (!viewer) return other.phones[0] ?? null;
-  const viewerNormalized = new Set(
-    viewer.phones.map((raw) => normalizePhone(raw))
-  );
-  for (const raw of other.phones) {
-    if (viewerNormalized.has(normalizePhone(raw))) return raw;
+
+  // Phone error: return the specific phone the two sides share, not just
+  // the first one. Prefer the live other person; otherwise intersect the
+  // viewer's phones with the incoming snapshot's phones.
+  if (other) {
+    if (viewer) {
+      const viewerNormalized = new Set(
+        viewer.phones.map((raw) => normalizePhone(raw))
+      );
+      for (const raw of other.phones) {
+        if (viewerNormalized.has(normalizePhone(raw))) return raw;
+      }
+    }
+    return other.phones[0] ?? null;
   }
-  return other.phones[0] ?? null;
+
+  const incomingPhones = incoming?.phone ?? [];
+  if (viewer) {
+    const viewerNormalized = new Set(
+      viewer.phones.map((raw) => normalizePhone(raw))
+    );
+    for (const raw of incomingPhones) {
+      if (viewerNormalized.has(normalizePhone(raw))) return raw;
+    }
+  }
+  return incomingPhones[0] ?? null;
 }
 
 export type InsertPersonInput = {
@@ -392,7 +419,7 @@ export function makeRepo(database: Database = defaultDb) {
         ...r,
         errorType: dataErrorTypeFromAlertKind(r.kind),
         relatedPerson: other,
-        collidingValue: computeCollidingValue(r.kind, viewer, other),
+        collidingValue: computeCollidingValue(r, viewer, other),
       };
     });
   }
