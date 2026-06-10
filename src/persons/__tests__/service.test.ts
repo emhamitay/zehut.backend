@@ -248,4 +248,33 @@ describe("commitContacts", () => {
     expect(rows[0].kind).toBe("id_mismatch_name_phone_match");
     expect(rows[0].sourceFile).toBe("file.xlsx");
   });
+
+  test("same ID, different name: alert exposes the shared ID + incoming name (no live related person)", async () => {
+    // National ID is unique, so two import rows with the same ID merge
+    // into one person. The conflicting row has no person record — it
+    // lives only in details.incoming. The alert must still surface a
+    // usable collidingValue (the shared ID) so the UI never shows "—".
+    const repo = makeRepo(tdb.db);
+    await commitContacts(
+      [
+        { id: "333444555", fullname: "רבקה הרצוג", phone: ["0533334445"] },
+        { id: "333444555", fullname: "דבורה הרצוג", phone: ["0533334446"] },
+      ],
+      "file.xlsx",
+      repo
+    );
+    const person = (await repo.findByNationalId("333444555"))!;
+    expect(person.fullname).toBe("רבקה הרצוג");
+
+    const open = await repo.listOpenAlerts(person.id);
+    expect(open.length).toBeGreaterThan(0);
+    const a = open[0];
+    expect(a.errorType).toBe("id_data_error");
+    // No second person exists for a same-ID merge.
+    expect(a.relatedPerson).toBeNull();
+    // The shared ID is surfaced for display instead of null.
+    expect(a.collidingValue).toBe("333444555");
+    // The conflicting name is preserved in the snapshot for the UI to show.
+    expect(a.details.incoming.fullname).toBe("דבורה הרצוג");
+  });
 });
