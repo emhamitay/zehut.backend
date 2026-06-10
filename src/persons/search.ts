@@ -47,8 +47,7 @@ export async function searchPersons(
   let persons: PersonWithPhones[] = [];
 
   if (resolvedBy === "id") {
-    const p = await repo.findByNationalId(trimmed);
-    if (p) persons = [p];
+    persons = await repo.findAllByNationalId(trimmed);
   } else if (resolvedBy === "phone") {
     const normalized = normalizePhone(trimmed);
     persons = await repo.findByPhoneNumbers([normalized]);

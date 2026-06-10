@@ -69,7 +69,9 @@ export async function commitContacts(
   for (const raw of contacts) {
     const c = normalize(raw);
 
-    const byId = c.nationalId ? await repo.findByNationalId(c.nationalId) : null;
+    const byIds = c.nationalId
+      ? await repo.findAllByNationalId(c.nationalId)
+      : [];
     const byPhone =
       c.phones.length > 0
         ? await repo.findByPhoneNumbers(c.phones.map((p) => p.normalized))
@@ -79,14 +81,13 @@ export async function commitContacts(
     // Build a normalized lookup for each candidate's stored raw phones.
     // The repo returns phones as raw strings; we re-normalize for comparison.
     const phoneNormalizedByRaw = new Map<string, string>();
-    for (const candidate of [byId, ...byPhone, ...byName]) {
-      if (!candidate) continue;
+    for (const candidate of [...byIds, ...byPhone, ...byName]) {
       for (const rawPhone of candidate.phones) {
         phoneNormalizedByRaw.set(rawPhone, normalizePhone(rawPhone));
       }
     }
 
-    const decision = decide(c, byId, byPhone, byName, phoneNormalizedByRaw);
+    const decision = decide(c, byIds, byPhone, byName, phoneNormalizedByRaw);
 
     if (decision.kind === "noop") {
       result.ignored += 1;
@@ -157,17 +158,6 @@ export async function commitContacts(
       result.alerts.push(...alertRows);
       continue;
     }
-
-    // alert_only
-    const alertRows = await persistAlerts(
-      repo,
-      decision.person.id,
-      decision.alerts,
-      raw,
-      sourceFile
-    );
-    result.alerts.push(...alertRows);
-    result.ignored += 1;
   }
 
   const enrichedAlerts = await repo.attachRelatedPersons(result.alerts);

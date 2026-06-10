@@ -201,14 +201,6 @@ function dedupeById(rows: PersonWithPhones[]): PersonWithPhones[] {
   return out;
 }
 
-function fieldStillMismatched(
-  a: string | null | undefined,
-  b: string | null | undefined
-): boolean {
-  if (!a || !b) return false;
-  return a.trim().toLowerCase() !== b.trim().toLowerCase();
-}
-
 // After a successful PATCH we walk every alert that touches this person
 // (symmetrically — either side) and ask: is the collision recorded in the
 // alert still true against the current DB? If not, delete the alert and
@@ -241,8 +233,9 @@ async function closeResolvedAlerts(
   }[] = [];
   for (const alert of open) {
     const other = alert.relatedPerson;
+    // Every live collision alert has both sides as live persons. If the
+    // other side is gone the alert is stale — close it.
     let stillColliding = false;
-
     if (other) {
       const otherPhonesNormalized = new Set(
         other.phones.map((raw) => normalizePhone(raw))
@@ -255,25 +248,6 @@ async function closeResolvedAlerts(
         otherPhonesNormalized.has(n)
       );
       stillColliding = idMatches || phoneOverlap;
-    } else {
-      // Symmetric alert with a dangling related person (deleted, or the
-      // alert references a snapshot only). Fall back to the snapshotted
-      // incoming payload — if any field the alert flagged still matches
-      // the other side's recorded value, keep the alert.
-      const incoming = alert.details.incoming;
-      const fields = alert.details.mismatchedFields;
-      if (fields.includes("id")) {
-        if (fieldStillMismatched(person.nationalId, incoming.id)) {
-          stillColliding = true;
-        }
-      }
-      if (fields.includes("phone")) {
-        const incomingNormalized = (incoming.phone ?? []).map(normalizePhone);
-        const stillOverlapsNone =
-          incomingNormalized.length > 0 &&
-          !incomingNormalized.some((n) => personNormalized.has(n));
-        if (stillOverlapsNone) stillColliding = true;
-      }
     }
 
     if (!stillColliding) {
@@ -332,7 +306,7 @@ export async function updatePerson(
   // name with another citizen and that's fine.
   const byId = candidate.nationalId
     ? await repo.findOtherByNationalId(candidate.nationalId, current.id)
-    : null;
+    : [];
   const byPhone =
     candidate.phones.length > 0
       ? await repo.findOtherByPhoneNumbers(
@@ -342,9 +316,7 @@ export async function updatePerson(
       : [];
 
   const others = dedupeById(
-    [byId, ...byPhone].filter(
-      (c): c is PersonWithPhones => c !== null && c.id !== current.id
-    )
+    [...byId, ...byPhone].filter((c) => c.id !== current.id)
   );
 
   if (others.length > 0) {

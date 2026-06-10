@@ -37,51 +37,31 @@ export type AlertWithRelated = AlertRow & {
   collidingValue: string | null;
 };
 
+// The colliding (shared) value: the nationalId both citizens carry for
+// an id_data_error, or the specific phone they share for a
+// phone_data_error. Both sides of a collision are always live persons
+// now, so we always have an `other` to read from.
 function computeCollidingValue(
   row: AlertRow,
   viewer: PersonWithPhones | null,
   other: PersonWithPhones | null
 ): string | null {
-  const kind = row.kind;
-  const incoming = row.details.incoming;
-  const errorType = dataErrorTypeFromAlertKind(kind);
+  const errorType = dataErrorTypeFromAlertKind(row.kind);
 
   if (errorType === "id_data_error") {
-    // The colliding (shared) value is the national ID. When there's a
-    // real related person, both carry it. When there isn't — the common
-    // same-ID import case, where the two rows merged into one person and
-    // the conflicting row lives only in the snapshot — fall back to the
-    // viewer's own ID (which equals the incoming ID that collided).
-    return (
-      other?.nationalId ?? viewer?.nationalId ?? incoming?.id ?? null
-    );
+    return other?.nationalId ?? viewer?.nationalId ?? null;
   }
 
-  // Phone error: return the specific phone the two sides share, not just
-  // the first one. Prefer the live other person; otherwise intersect the
-  // viewer's phones with the incoming snapshot's phones.
-  if (other) {
-    if (viewer) {
-      const viewerNormalized = new Set(
-        viewer.phones.map((raw) => normalizePhone(raw))
-      );
-      for (const raw of other.phones) {
-        if (viewerNormalized.has(normalizePhone(raw))) return raw;
-      }
-    }
-    return other.phones[0] ?? null;
-  }
-
-  const incomingPhones = incoming?.phone ?? [];
+  if (!other) return null;
   if (viewer) {
     const viewerNormalized = new Set(
       viewer.phones.map((raw) => normalizePhone(raw))
     );
-    for (const raw of incomingPhones) {
+    for (const raw of other.phones) {
       if (viewerNormalized.has(normalizePhone(raw))) return raw;
     }
   }
-  return incomingPhones[0] ?? null;
+  return other.phones[0] ?? null;
 }
 
 export type InsertPersonInput = {
@@ -130,6 +110,20 @@ export function makeRepo(database: Database = defaultDb) {
       .limit(1);
     const withPhones = await attachPhones(rows);
     return withPhones[0] ?? null;
+  }
+
+  // national_id is NOT unique. Same-ID collisions surface as symmetric
+  // alerts (see persons/match.ts), so every code path that needs to
+  // reason about the full set of citizens carrying an ID — ingest, search
+  // by ID, the PATCH collision check — uses this.
+  async function findAllByNationalId(
+    nationalId: string
+  ): Promise<PersonWithPhones[]> {
+    const rows = await database
+      .select()
+      .from(persons)
+      .where(eq(persons.nationalId, nationalId));
+    return attachPhones(rows);
   }
 
   async function findByPhoneNumbers(
@@ -524,6 +518,24 @@ export function makeRepo(database: Database = defaultDb) {
     fromPersonId: string,
     toPersonId: string
   ): Promise<void> {
+    // A merge can collapse the two sides of a symmetric alert into the
+    // same person — e.g. the same-ID typo flagged at ingest and then
+    // explicitly merged by a coordinator. Drop those rows up-front; the
+    // collision they describe is no longer real.
+    await database
+      .delete(alerts)
+      .where(
+        or(
+          and(
+            eq(alerts.personId, fromPersonId),
+            eq(alerts.relatedPersonId, toPersonId)
+          ),
+          and(
+            eq(alerts.personId, toPersonId),
+            eq(alerts.relatedPersonId, fromPersonId)
+          )
+        )
+      );
     await database
       .update(alerts)
       .set({ personId: toPersonId })
@@ -579,7 +591,7 @@ export function makeRepo(database: Database = defaultDb) {
   async function findOtherByNationalId(
     nationalId: string,
     excludePersonId: string
-  ): Promise<PersonWithPhones | null> {
+  ): Promise<PersonWithPhones[]> {
     const rows = await database
       .select()
       .from(persons)
@@ -588,10 +600,8 @@ export function makeRepo(database: Database = defaultDb) {
           eq(persons.nationalId, nationalId),
           ne(persons.id, excludePersonId)
         )
-      )
-      .limit(1);
-    const withPhones = await attachPhones(rows);
-    return withPhones[0] ?? null;
+      );
+    return attachPhones(rows);
   }
 
   async function findOtherByPhoneNumbers(
@@ -675,6 +685,7 @@ export function makeRepo(database: Database = defaultDb) {
 
   return {
     findByNationalId,
+    findAllByNationalId,
     findByPhoneNumbers,
     findByFullname,
     findById,
