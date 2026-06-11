@@ -69,6 +69,11 @@ export async function commitContacts(
   for (const raw of contacts) {
     const c = normalize(raw);
 
+    if (c.phones.length === 0) {
+      result.ignored += 1;
+      continue;
+    }
+
     const byIds = c.nationalId
       ? await repo.findAllByNationalId(c.nationalId)
       : [];
