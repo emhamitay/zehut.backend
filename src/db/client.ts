@@ -4,9 +4,11 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { Pool } from "pg";
 import * as schema from "./schema";
 
-const DATABASE_URL =
-  Bun.env.DATABASE_URL ??
-  "postgres://postgres:postgres@localhost:5432/zehut";
+const DATABASE_URL = Bun.env.DATABASE_URL;
+
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL is not set");
+}
 
 const pool = new Pool({ connectionString: DATABASE_URL });
 

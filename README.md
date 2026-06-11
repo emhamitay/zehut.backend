@@ -137,6 +137,9 @@ Notes:
 | `bun run db:clear` | Clear the database and reapply the schema (when using Docker). |
 | `bun run db:studio` | Open Drizzle Studio to browse the tables. |
 | `bun run dev` | Start the API (`http://localhost:4000`) with file watching. |
+| `bun run build` | Build a production bundle into `dist/`. |
+| `bun run prod` | Run the built production server from `dist/index.js`. |
+| `bun run start` | Production start alias (recommended for Railway Start Command). |
 | `bun test` | Run the test suite. |
 
 ## First-time setup
@@ -175,6 +178,35 @@ Re-run `bun run db:push` whenever you change `src/db/schema.ts`.
 ## Switching to a hosted Postgres (Neon, Supabase, etc.)
 
 Set `DATABASE_URL` to the hosted connection string. No schema changes required — skip `bun run db` and `bun run db:down` since you no longer need the local container.
+
+## Deploying to Railway
+
+Use these values in your Railway service settings:
+
+- **Build Command:** `bun run build`
+- **Start Command:** `bun run start`
+
+Why this setup:
+
+- `build` compiles `src/index.ts` into `dist/index.js`.
+- `start` runs `dist/index.js` in production mode.
+
+Required Railway environment variables:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_MODEL`
+- `CURRENT_SEASON`
+- Optional: `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, `CONTACT_PAGE_ROWS`, `CONTACT_PAGE_PAIR_ROWS`
+
+If you are using SQL migrations in production, run migrations during deploy:
+
+- Add a **pre-deploy/release command** (or CI step): `bun run db:migrate`
+
+If you use schema push in your workflow instead of migrations, use:
+
+- `bun run db:push`
 
 ---
 
