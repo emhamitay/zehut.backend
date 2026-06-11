@@ -9,15 +9,25 @@ import { extractRoutes } from "./extract/routes";
 import { personsRoutes } from "./persons/routes";
 import { contactPagesRoutes } from "./contact-pages/routes";
 
+export type CorsOrigin = RegExp | string;
+
 export type AppDeps = {
   users: UserService;
   auth: AuthService;
-  corsOrigin?: RegExp | string;
+  corsOrigin?: CorsOrigin | CorsOrigin[];
 };
+
+const LOCALHOST_ORIGIN = /^http:\/\/localhost(?::\d+)?$/;
 
 export function buildApp(deps: AppDeps) {
   const { users, auth } = deps;
-  const corsOrigin = deps.corsOrigin ?? /^http:\/\/localhost(?::\d+)?$/;
+  // Always allow localhost (dev); add any configured production origins on top.
+  const extra = deps.corsOrigin
+    ? Array.isArray(deps.corsOrigin)
+      ? deps.corsOrigin
+      : [deps.corsOrigin]
+    : [];
+  const corsOrigin: CorsOrigin[] = [LOCALHOST_ORIGIN, ...extra];
 
   return new Elysia()
     .use(cors({ origin: corsOrigin }))
