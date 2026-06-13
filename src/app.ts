@@ -22,7 +22,7 @@ export function buildApp(deps: AppDeps) {
   return new Elysia()
     .use(cors({ origin: corsOrigin }))
     .use(authPlugin(auth))
-    .get("/", () => "Hello Zehut Yehudit Server!")
+    .get("/", () => `Hello Zehut Yehudit Server!\nCors Origin: ${corsOrigin}`)
     .use(authRoutes(users, auth))
     .use(usersRoutes(users, auth))
     .use(extractRoutes(auth))
