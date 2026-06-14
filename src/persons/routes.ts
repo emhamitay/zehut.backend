@@ -6,6 +6,7 @@ import { deletePersonAction } from "./delete";
 import { searchPersons, type SearchBy } from "./search";
 import { getPersonHistory } from "./history";
 import { repo } from "./repo";
+import { repo as contactPagesRepo } from "../contact-pages/repo";
 import {
   CommitInputSchema,
   CommitResultSchema,
@@ -96,8 +97,11 @@ export function personsRoutes(auth: AuthService) {
           set.status = 404;
           return { error: "not_found" };
         }
-        const openAlerts = await repo.listOpenAlerts(person.id);
-        return { person, openAlerts };
+        const [openAlerts, contactPage] = await Promise.all([
+          repo.listOpenAlerts(person.id),
+          contactPagesRepo.findContactPageForPerson(person.id),
+        ]);
+        return { person, openAlerts, contactPage: contactPage ?? null };
       },
       {
         params: t.Object({ id: t.String() }),

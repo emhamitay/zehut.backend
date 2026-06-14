@@ -177,6 +177,15 @@ export function makeRepo(database: Database = defaultDb) {
     return row ?? null;
   }
 
+  async function getPage(pageId: string): Promise<ContactPageRow | null> {
+    const [row] = await database
+      .select()
+      .from(contactPages)
+      .where(eq(contactPages.id, pageId))
+      .limit(1);
+    return row ?? null;
+  }
+
   async function findEntriesByPage(
     pageId: string
   ): Promise<ContactPageEntryRow[]> {
@@ -185,6 +194,30 @@ export function makeRepo(database: Database = defaultDb) {
       .from(contactPageEntries)
       .where(eq(contactPageEntries.contactPageId, pageId))
       .orderBy(asc(contactPageEntries.id));
+  }
+
+  async function findContactPageForPerson(personId: string): Promise<{
+    pageId: string;
+    pageNumber: number;
+    season: string;
+    createdByUserId: string;
+    createdByUsername: string;
+  } | null> {
+    const [row] = await database
+      .select({
+        pageId: contactPages.id,
+        pageNumber: contactPages.pageNumber,
+        season: contactPages.season,
+        createdByUserId: contactPages.createdByUserId,
+        createdByUsername: users.username,
+      })
+      .from(contactPageEntries)
+      .innerJoin(contactPages, eq(contactPageEntries.contactPageId, contactPages.id))
+      .innerJoin(users, eq(contactPages.createdByUserId, users.id))
+      .where(eq(contactPageEntries.personId, personId))
+      .orderBy(desc(contactPages.createdAt))
+      .limit(1);
+    return row ?? null;
   }
 
   return {
@@ -196,7 +229,9 @@ export function makeRepo(database: Database = defaultDb) {
     insertPageWithEntries,
     listPagesForUser,
     getPageForUser,
+    getPage,
     findEntriesByPage,
+    findContactPageForPerson,
   };
 }
 

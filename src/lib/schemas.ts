@@ -198,7 +198,19 @@ export const PersonHistoryEntrySchema = t.Object({
   ]),
 });
 
+export const ContactPageInfoSchema = t.Union([
+  t.Object({
+    pageId: t.String(),
+    pageNumber: t.Number(),
+    season: t.String(),
+    createdByUserId: t.String(),
+    createdByUsername: t.String(),
+  }),
+  t.Null(),
+]);
+
 export const PersonDetailSchema = t.Object({
   person: PersonWithPhonesSchema,
   openAlerts: t.Array(AlertSchema),
+  contactPage: ContactPageInfoSchema,
 });

@@ -212,6 +212,14 @@ export function makeService(repo: Repo = defaultRepo) {
     return loadPageViewFromIds(page, personIds, page.season);
   }
 
+  async function getPage(pageId: string): Promise<PageView | null> {
+    const page = await repo.getPage(pageId);
+    if (!page) return null;
+    const entries = await repo.findEntriesByPage(pageId);
+    const personIds = entries.map((e) => e.personId);
+    return loadPageViewFromIds(page, personIds, page.season);
+  }
+
   async function listPagesForUser(
     userId: string
   ): Promise<
@@ -226,7 +234,17 @@ export function makeService(repo: Repo = defaultRepo) {
     }));
   }
 
-  return { generatePageForUser, getPageForUser, listPagesForUser };
+  async function findContactPageForPerson(personId: string): Promise<{
+    pageId: string;
+    pageNumber: number;
+    season: string;
+    createdByUserId: string;
+    createdByUsername: string;
+  } | null> {
+    return repo.findContactPageForPerson(personId);
+  }
+
+  return { generatePageForUser, getPageForUser, getPage, listPagesForUser, findContactPageForPerson };
 }
 
 function otherSide(alert: AlertRow, personId: string): string | null {

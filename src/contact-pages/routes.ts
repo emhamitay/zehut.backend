@@ -44,34 +44,50 @@ export function contactPagesRoutes(
 ) {
   return new Elysia({ prefix: "/api/contact-pages" })
     .onBeforeHandle(requireAuth(auth))
-    .post("/", async ({ request, set }) => {
-      const userId = await currentUserIdFromRequest(auth, request);
-      if (!userId) {
-        set.status = 401;
-        return { error: "unauthorized" };
+    .post(
+      "/",
+      async ({ body, request, set }) => {
+        const userId = await currentUserIdFromRequest(auth, request);
+        if (!userId) {
+          set.status = 401;
+          return { error: "unauthorized" };
+        }
+        const targetUserId = body?.targetUserId ?? userId;
+        try {
+          return await service.generatePageForUser(targetUserId);
+        } catch (e) {
+          set.status = 400;
+          return { error: "generate_failed", message: (e as Error).message };
+        }
+      },
+      {
+        body: t.Optional(
+          t.Object({ targetUserId: t.Optional(t.String()) })
+        ),
       }
-      try {
-        return await service.generatePageForUser(userId);
-      } catch (e) {
-        set.status = 400;
-        return { error: "generate_failed", message: (e as Error).message };
+    )
+    .get(
+      "/",
+      async ({ query, request, set }) => {
+        const userId = await currentUserIdFromRequest(auth, request);
+        if (!userId) {
+          set.status = 401;
+          return { error: "unauthorized" };
+        }
+        const targetUserId = query.userId ?? userId;
+        return service.listPagesForUser(targetUserId);
+      },
+      {
+        query: t.Object({ userId: t.Optional(t.String()) }),
       }
-    })
-    .get("/", async ({ request, set }) => {
-      const userId = await currentUserIdFromRequest(auth, request);
-      if (!userId) {
-        set.status = 401;
-        return { error: "unauthorized" };
-      }
-      return service.listPagesForUser(userId);
-    })
+    )
     .get("/:id", async ({ params, request, set }) => {
       const userId = await currentUserIdFromRequest(auth, request);
       if (!userId) {
         set.status = 401;
         return { error: "unauthorized" };
       }
-      const page = await service.getPageForUser(params.id, userId);
+      const page = await service.getPage(params.id);
       if (!page) {
         set.status = 404;
         return { error: "not_found" };
