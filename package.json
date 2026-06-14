@@ -24,7 +24,7 @@
     "pg": "^8.21.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.1",
+    "@electric-sql/pglite": "^0.5.2",
     "@types/pg": "^8.20.0",
     "bun-types": "latest",
     "drizzle-kit": "^0.31.10"
