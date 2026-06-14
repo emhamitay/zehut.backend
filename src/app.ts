@@ -15,6 +15,10 @@ export type AppDeps = {
   users: UserService;
   auth: AuthService;
   corsOrigin?: CorsOrigin | CorsOrigin[];
+  // Feature flag for AI extraction. Defaults to true so tests / callers that
+  // don't care about the flag keep working; production wires the real value
+  // from the required USE_AI env var (see index.ts / parseUseAi).
+  useAi?: boolean;
 };
 
 const LOCALHOST_ORIGIN = /^http:\/\/localhost(?::\d+)?$/;
@@ -35,7 +39,7 @@ export function buildApp(deps: AppDeps) {
     .get("/", () => `Hello Zehut Yehudit Server!\nCors Origin: ${corsOrigin}`)
     .use(authRoutes(users, auth))
     .use(usersRoutes(users, auth))
-    .use(extractRoutes(auth))
+    .use(extractRoutes(auth, deps.useAi ?? true))
     .use(personsRoutes(auth))
     .use(contactPagesRoutes(auth));
 }
