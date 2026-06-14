@@ -10,6 +10,7 @@ import {
   persons,
   phones,
   users,
+  type AlertDetails,
   type AlertKind,
   type AlertRow,
   type DataErrorType,
@@ -645,6 +646,118 @@ export function makeRepo(database: Database = defaultDb) {
     return attachPhones(rows);
   }
 
+  // Batch version of findAllByNationalId — one query for multiple IDs.
+  async function findAllByNationalIds(ids: string[]): Promise<PersonWithPhones[]> {
+    if (ids.length === 0) return [];
+    const rows = await database
+      .select()
+      .from(persons)
+      .where(inArray(persons.nationalId, ids));
+    return attachPhones(rows);
+  }
+
+  // Executes all accumulated write operations from a commitContacts batch in a
+  // single transaction: person inserts, phone inserts/adds, nationalId backfills,
+  // and alert inserts.
+  async function batchCommit(input: {
+    personInserts: Array<{
+      id: string;
+      nationalId: string | null;
+      fullname: string | null;
+      phones: Array<{ raw: string; normalized: string }>;
+    }>;
+    phoneAdds: Array<{
+      personId: string;
+      phones: Array<{ raw: string; normalized: string }>;
+    }>;
+    nationalIdUpdates: Array<{ personId: string; nationalId: string }>;
+    alertInserts: Array<{
+      kind: AlertKind;
+      personId: string;
+      relatedPersonId: string | null;
+      details: AlertDetails;
+    }>;
+    sourceFile: string | null;
+  }): Promise<AlertRow[]> {
+    const hasWork =
+      input.personInserts.length > 0 ||
+      input.phoneAdds.length > 0 ||
+      input.nationalIdUpdates.length > 0 ||
+      input.alertInserts.length > 0;
+
+    if (!hasWork) return [];
+
+    return database.transaction(async (tx) => {
+      const now = new Date();
+
+      // 1. Batch-insert new persons.
+      if (input.personInserts.length > 0) {
+        await tx.insert(persons).values(
+          input.personInserts.map((p) => ({
+            id: p.id,
+            nationalId: p.nationalId,
+            fullname: p.fullname,
+            sourceFile: input.sourceFile ?? null,
+          }))
+        );
+
+        // 2. Batch-insert phones for new persons.
+        const newPersonPhones = input.personInserts.flatMap((p) =>
+          p.phones.map((ph) => ({
+            personId: p.id,
+            number: ph.normalized,
+            raw: ph.raw,
+          }))
+        );
+        if (newPersonPhones.length > 0) {
+          await tx.insert(phones).values(newPersonPhones).onConflictDoNothing();
+        }
+      }
+
+      // 3. Backfill nationalIds on existing persons.
+      for (const u of input.nationalIdUpdates) {
+        await tx
+          .update(persons)
+          .set({ nationalId: u.nationalId, updatedAt: now })
+          .where(eq(persons.id, u.personId));
+      }
+
+      // 4. Batch-insert added phones for existing persons.
+      if (input.phoneAdds.length > 0) {
+        const addedPhoneRows = input.phoneAdds.flatMap((pa) =>
+          pa.phones.map((p) => ({
+            personId: pa.personId,
+            number: p.normalized,
+            raw: p.raw,
+          }))
+        );
+        if (addedPhoneRows.length > 0) {
+          await tx.insert(phones).values(addedPhoneRows).onConflictDoNothing();
+          const affectedIds = [...new Set(input.phoneAdds.map((pa) => pa.personId))];
+          await tx
+            .update(persons)
+            .set({ updatedAt: now })
+            .where(inArray(persons.id, affectedIds));
+        }
+      }
+
+      // 5. Batch-insert alerts.
+      if (input.alertInserts.length === 0) return [];
+      return tx
+        .insert(alerts)
+        .values(
+          input.alertInserts.map((a) => ({
+            kind: a.kind,
+            personId: a.personId,
+            relatedPersonId: a.relatedPersonId,
+            details: a.details,
+            sourceFile: input.sourceFile ?? null,
+          }))
+        )
+        .returning();
+    });
+  }
+
   // Counts every alert that touches each person, symmetrically. An alert
   // where personId=A and relatedPersonId=B contributes one to A and one
   // to B, so a citizen showing "2 שגיאות" on search means two distinct
@@ -686,6 +799,7 @@ export function makeRepo(database: Database = defaultDb) {
   return {
     findByNationalId,
     findAllByNationalId,
+    findAllByNationalIds,
     findByPhoneNumbers,
     findByFullname,
     findById,
@@ -710,6 +824,7 @@ export function makeRepo(database: Database = defaultDb) {
     findOtherByPhoneNumbers,
     findOtherByFullname,
     countOpenAlertsForPersons,
+    batchCommit,
   };
 }
 

@@ -13,7 +13,7 @@
         "pg": "^8.21.0",
       },
       "devDependencies": {
-        "@electric-sql/pglite": "^0.5.1",
+        "@electric-sql/pglite": "^0.5.2",
         "@types/pg": "^8.20.0",
         "bun-types": "latest",
         "drizzle-kit": "^0.31.10",
@@ -25,7 +25,7 @@
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 
-    "@electric-sql/pglite": ["@electric-sql/pglite@0.5.1", "", {}, "sha512-h2Vc+qkQqsEL5kvyN5nBAxn3Vbyvka7QfDW7Io+CdcwU1+X8JbCAN2og+5dI11S3eJuDfroUCxzJaap6k+ezEw=="],
+    "@electric-sql/pglite": ["@electric-sql/pglite@0.5.2", "", {}, "sha512-y6ySdFE7FQB7BkVaSNaPINgY7mXCyvi+3GQB5ySX9WGwgrdh31WXMP5RM40oAyYff47lIr7xdcW8UbCW5NHDmw=="],
 
     "@elysiajs/cors": ["@elysiajs/cors@1.4.2", "", { "peerDependencies": { "elysia": ">= 1.4.0" } }, "sha512-FTCcbH35brTLigF1W7BYySRZomgI/dBEMK9BgK9RP9Nez7zmpGh4koL/Yr1BFv8nYz7CfhRvcM8d/c+XnwMaVQ=="],
 
