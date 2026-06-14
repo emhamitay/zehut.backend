@@ -3,8 +3,14 @@ import { makeUserRepo } from "./users/repo";
 import { makeUserService } from "./users/service";
 import { makeAuthService } from "./auth/service";
 import { bootstrapAdmin } from "./auth/bootstrap";
+import { parseUseAi } from "./extract/routes";
 
 const PORT: number = 4000;
+
+// Required flag — throws on startup if missing/invalid (like DATABASE_URL),
+// so a misconfigured server never silently leaks PII to the LLM.
+const useAi = parseUseAi();
+console.log(`[extract] AI extraction is ${useAi ? "enabled" : "disabled"}`);
 
 const JWT_SECRET = Bun.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -39,7 +45,7 @@ if (corsOrigin.length === 0) {
   );
 }
 
-const app = buildApp({ users, auth, corsOrigin }).listen(PORT);
+const app = buildApp({ users, auth, corsOrigin, useAi }).listen(PORT);
 
 console.log(
   `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
