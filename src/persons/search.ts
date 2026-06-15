@@ -1,7 +1,7 @@
 import { normalizePhone } from "./normalize";
 import { repo as defaultRepo, type PersonWithPhones, type Repo } from "./repo";
 
-export type SearchBy = "auto" | "id" | "phone" | "name";
+export type SearchBy = "auto" | "phone" | "name";
 
 export type SearchInput = {
   query: string;
@@ -21,13 +21,11 @@ export type SearchResult = {
   hits: SearchHit[];
 };
 
-const ID_DIGITS = 9;
 const MIN_PHONE_DIGITS = 7;
 
 function detectBy(query: string): Exclude<SearchBy, "auto"> {
   const digitsOnly = query.replace(/\D/g, "");
   const isAllDigits = digitsOnly === query.trim().replace(/^\+/, "");
-  if (isAllDigits && digitsOnly.length === ID_DIGITS) return "id";
   if (digitsOnly.length >= MIN_PHONE_DIGITS && isAllDigits) return "phone";
   if (digitsOnly.length >= MIN_PHONE_DIGITS && /[+\-\s()]/.test(query))
     return "phone";
@@ -46,9 +44,7 @@ export async function searchPersons(
 
   let persons: PersonWithPhones[] = [];
 
-  if (resolvedBy === "id") {
-    persons = await repo.findAllByNationalId(trimmed);
-  } else if (resolvedBy === "phone") {
+  if (resolvedBy === "phone") {
     const normalized = normalizePhone(trimmed);
     persons = await repo.findByPhoneNumbers([normalized]);
   } else {

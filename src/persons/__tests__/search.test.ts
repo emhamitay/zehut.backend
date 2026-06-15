@@ -41,8 +41,8 @@ describe("searchPersons", () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: "111", fullname: "David Cohen", phone: ["0500000001"] },
-        { id: "222", fullname: "David Levi", phone: ["0500000002"] },
+        { fullname: "David Cohen", phone: ["0500000001"] },
+        { fullname: "David Levi", phone: ["0500000002"] },
       ],
       "seed.xlsx",
       repo
@@ -64,14 +64,14 @@ describe("searchPersons", () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: "111", fullname: "David Cohen", phone: ["0500000001"] },
-        { id: "222", fullname: "David Levi", phone: ["0500000002"] },
+        { fullname: "David Cohen", phone: ["0500000001"] },
+        { fullname: "David Levi", phone: ["0500000002"] },
       ],
       "seed.xlsx",
       repo
     );
-    const david1 = (await repo.findByNationalId("111"))!;
-    const david2 = (await repo.findByNationalId("222"))!;
+    const david1 = (await repo.findByPhoneNumbers(["0500000001"]))[0];
+    const david2 = (await repo.findByPhoneNumbers(["0500000002"]))[0];
     await attach(david1.id, userA, 1);
     await attach(david2.id, userB, 2);
 
@@ -88,32 +88,35 @@ describe("searchPersons", () => {
     expect(r.hits[0].person.id).toBe(david1.id);
   });
 
-  test("id search ignores myPagesOnly", async () => {
+  test("auto-detects an all-digit query as a phone search", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "987654321", fullname: "X", phone: ["0500000001"] }],
+      [{ fullname: "X", phone: ["0500000001"] }],
       "seed.xlsx",
       repo
     );
     const r = await searchPersons(
       {
-        query: "987654321",
+        query: "0500000001",
         currentUserId: userA,
         myPagesOnly: true,
       },
       repo
     );
-    expect(r.resolvedBy).toBe("id");
+    expect(r.resolvedBy).toBe("phone");
     expect(r.hits).toHaveLength(1);
   });
 
-  test("phone search normalizes input", async () => {
+  test("phone search ignores myPagesOnly", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "1", fullname: "X", phone: ["0500000001"] }],
+      [{ fullname: "X", phone: ["0500000001"] }],
       "seed.xlsx",
       repo
     );
+    const x = (await repo.findByPhoneNumbers(["0500000001"]))[0];
+    await attach(x.id, userB, 1);
+
     const r = await searchPersons(
       {
         query: "050-000-0001",
@@ -126,28 +129,28 @@ describe("searchPersons", () => {
     expect(r.hits).toHaveLength(1);
   });
 
-  test("hits include openAlertCount", async () => {
+  test("phone search surfaces both citizens of a collision, each with an open alert", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "111", fullname: "Alice", phone: ["0500000001"] }],
+      [{ fullname: "Alice", phone: ["0500000001"] }],
       "seed.xlsx",
       repo
     );
     await commitContacts(
-      [{ id: "111", fullname: "Alicia", phone: ["0500000002"] }],
+      [{ fullname: "Alicia", phone: ["0500000001"] }],
       "x.xlsx",
       repo
     );
     const r = await searchPersons(
       {
-        query: "111",
-        by: "id",
+        query: "0500000001",
+        by: "phone",
         currentUserId: userA,
       },
       repo
     );
-    // National ID is no longer unique: searching by ID surfaces both
-    // colliding citizens, and each carries the symmetric data-error.
+    // Two citizens share the phone with different names, so both surface
+    // and each carries the symmetric data-error alert.
     expect(r.hits).toHaveLength(2);
     for (const hit of r.hits) {
       expect(hit.openAlertCount).toBeGreaterThan(0);

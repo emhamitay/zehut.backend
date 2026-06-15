@@ -5,7 +5,6 @@ import {
   alerts,
   contactPageEntries,
   contactPages,
-  dataErrorTypeFromAlertKind,
   personAudit,
   persons,
   phones,
@@ -13,7 +12,6 @@ import {
   type AlertDetails,
   type AlertKind,
   type AlertRow,
-  type DataErrorType,
   type PersonAuditField,
   type PersonAuditRow,
   type PersonRow,
@@ -27,32 +25,21 @@ export type PersonWithPhones = PersonRow & { phones: string[] };
 // alert's relatedPersonId. This is what every consumer actually wants:
 // the citizen on the other side of the collision.
 //
-// `collidingValue` is the value that triggered the alert: the shared
-// nationalId for id_data_error, or one of the shared phone numbers for
-// phone_data_error. The frontend uses this to write copy like
-// "מספר הטלפון 050-1234567 מופיע גם אצל יוסי כהן" without having to
-// re-derive which phone collided.
+// `collidingValue` is the phone number the two citizens share. The
+// frontend uses this to write copy like "מספר הטלפון 050-1234567 מופיע גם
+// אצל יוסי כהן" without having to re-derive which phone collided.
 export type AlertWithRelated = AlertRow & {
-  errorType: DataErrorType;
   relatedPerson: PersonWithPhones | null;
   collidingValue: string | null;
 };
 
-// The colliding (shared) value: the nationalId both citizens carry for
-// an id_data_error, or the specific phone they share for a
-// phone_data_error. Both sides of a collision are always live persons
-// now, so we always have an `other` to read from.
+// The shared phone the two citizens have in common. Both sides of a
+// collision are always live persons, so we always have an `other` to read
+// from.
 function computeCollidingValue(
-  row: AlertRow,
   viewer: PersonWithPhones | null,
   other: PersonWithPhones | null
 ): string | null {
-  const errorType = dataErrorTypeFromAlertKind(row.kind);
-
-  if (errorType === "id_data_error") {
-    return other?.nationalId ?? viewer?.nationalId ?? null;
-  }
-
   if (!other) return null;
   if (viewer) {
     const viewerNormalized = new Set(
@@ -66,13 +53,10 @@ function computeCollidingValue(
 }
 
 export type InsertPersonInput = {
-  nationalId: string | null;
   fullname: string | null;
   sourceFile?: string | null;
   phones: { raw: string; normalized: string }[];
 };
-
-import type { AlertDetails } from "../db/schema";
 
 export type InsertAlertInput = {
   kind: AlertKind;
@@ -99,32 +83,6 @@ export function makeRepo(database: Database = defaultDb) {
       byPerson.set(p.personId, list);
     }
     return rows.map((r) => ({ ...r, phones: byPerson.get(r.id) ?? [] }));
-  }
-
-  async function findByNationalId(
-    nationalId: string
-  ): Promise<PersonWithPhones | null> {
-    const rows = await database
-      .select()
-      .from(persons)
-      .where(eq(persons.nationalId, nationalId))
-      .limit(1);
-    const withPhones = await attachPhones(rows);
-    return withPhones[0] ?? null;
-  }
-
-  // national_id is NOT unique. Same-ID collisions surface as symmetric
-  // alerts (see persons/match.ts), so every code path that needs to
-  // reason about the full set of citizens carrying an ID — ingest, search
-  // by ID, the PATCH collision check — uses this.
-  async function findAllByNationalId(
-    nationalId: string
-  ): Promise<PersonWithPhones[]> {
-    const rows = await database
-      .select()
-      .from(persons)
-      .where(eq(persons.nationalId, nationalId));
-    return attachPhones(rows);
   }
 
   async function findByPhoneNumbers(
@@ -171,7 +129,6 @@ export function makeRepo(database: Database = defaultDb) {
       const [person] = await tx
         .insert(persons)
         .values({
-          nationalId: input.nationalId,
           fullname: input.fullname,
           sourceFile: input.sourceFile ?? null,
         })
@@ -236,27 +193,6 @@ export function makeRepo(database: Database = defaultDb) {
     });
   }
 
-  async function updatePersonNationalId(
-    personId: string,
-    nationalId: string
-  ): Promise<PersonWithPhones> {
-    return database.transaction(async (tx) => {
-      await tx
-        .update(persons)
-        .set({ nationalId, updatedAt: new Date() })
-        .where(eq(persons.id, personId));
-      const [person] = await tx
-        .select()
-        .from(persons)
-        .where(eq(persons.id, personId));
-      const phoneRows = await tx
-        .select()
-        .from(phones)
-        .where(eq(phones.personId, personId));
-      return { ...person, phones: phoneRows.map((p) => p.raw) };
-    });
-  }
-
   async function insertAlert(input: InsertAlertInput): Promise<AlertRow> {
     const [row] = await database
       .insert(alerts)
@@ -273,14 +209,11 @@ export function makeRepo(database: Database = defaultDb) {
 
   async function updatePersonFields(
     personId: string,
-    fields: { nationalId?: string | null; fullname?: string | null }
+    fields: { fullname?: string | null }
   ): Promise<void> {
-    const patch: { nationalId?: string | null; fullname?: string | null; updatedAt: Date } = {
+    const patch: { fullname?: string | null; updatedAt: Date } = {
       updatedAt: new Date(),
     };
-    if (Object.prototype.hasOwnProperty.call(fields, "nationalId")) {
-      patch.nationalId = fields.nationalId ?? null;
-    }
     if (Object.prototype.hasOwnProperty.call(fields, "fullname")) {
       patch.fullname = fields.fullname ?? null;
     }
@@ -314,7 +247,6 @@ export function makeRepo(database: Database = defaultDb) {
       const rows = await database
         .selectDistinct({
           id: persons.id,
-          nationalId: persons.nationalId,
           fullname: persons.fullname,
           sourceFile: persons.sourceFile,
           createdAt: persons.createdAt,
@@ -412,9 +344,8 @@ export function makeRepo(database: Database = defaultDb) {
       const other = otherId ? byId.get(otherId) ?? null : null;
       return {
         ...r,
-        errorType: dataErrorTypeFromAlertKind(r.kind),
         relatedPerson: other,
-        collidingValue: computeCollidingValue(r, viewer, other),
+        collidingValue: computeCollidingValue(viewer, other),
       };
     });
   }
@@ -589,22 +520,6 @@ export function makeRepo(database: Database = defaultDb) {
     await database.delete(persons).where(eq(persons.id, personId));
   }
 
-  async function findOtherByNationalId(
-    nationalId: string,
-    excludePersonId: string
-  ): Promise<PersonWithPhones[]> {
-    const rows = await database
-      .select()
-      .from(persons)
-      .where(
-        and(
-          eq(persons.nationalId, nationalId),
-          ne(persons.id, excludePersonId)
-        )
-      );
-    return attachPhones(rows);
-  }
-
   async function findOtherByPhoneNumbers(
     normalized: string[],
     excludePersonId: string
@@ -646,23 +561,11 @@ export function makeRepo(database: Database = defaultDb) {
     return attachPhones(rows);
   }
 
-  // Batch version of findAllByNationalId — one query for multiple IDs.
-  async function findAllByNationalIds(ids: string[]): Promise<PersonWithPhones[]> {
-    if (ids.length === 0) return [];
-    const rows = await database
-      .select()
-      .from(persons)
-      .where(inArray(persons.nationalId, ids));
-    return attachPhones(rows);
-  }
-
   // Executes all accumulated write operations from a commitContacts batch in a
-  // single transaction: person inserts, phone inserts/adds, nationalId backfills,
-  // and alert inserts.
+  // single transaction: person inserts, phone inserts/adds, and alert inserts.
   async function batchCommit(input: {
     personInserts: Array<{
       id: string;
-      nationalId: string | null;
       fullname: string | null;
       phones: Array<{ raw: string; normalized: string }>;
     }>;
@@ -670,7 +573,6 @@ export function makeRepo(database: Database = defaultDb) {
       personId: string;
       phones: Array<{ raw: string; normalized: string }>;
     }>;
-    nationalIdUpdates: Array<{ personId: string; nationalId: string }>;
     alertInserts: Array<{
       kind: AlertKind;
       personId: string;
@@ -682,7 +584,6 @@ export function makeRepo(database: Database = defaultDb) {
     const hasWork =
       input.personInserts.length > 0 ||
       input.phoneAdds.length > 0 ||
-      input.nationalIdUpdates.length > 0 ||
       input.alertInserts.length > 0;
 
     if (!hasWork) return [];
@@ -695,7 +596,6 @@ export function makeRepo(database: Database = defaultDb) {
         await tx.insert(persons).values(
           input.personInserts.map((p) => ({
             id: p.id,
-            nationalId: p.nationalId,
             fullname: p.fullname,
             sourceFile: input.sourceFile ?? null,
           }))
@@ -714,15 +614,7 @@ export function makeRepo(database: Database = defaultDb) {
         }
       }
 
-      // 3. Backfill nationalIds on existing persons.
-      for (const u of input.nationalIdUpdates) {
-        await tx
-          .update(persons)
-          .set({ nationalId: u.nationalId, updatedAt: now })
-          .where(eq(persons.id, u.personId));
-      }
-
-      // 4. Batch-insert added phones for existing persons.
+      // 3. Batch-insert added phones for existing persons.
       if (input.phoneAdds.length > 0) {
         const addedPhoneRows = input.phoneAdds.flatMap((pa) =>
           pa.phones.map((p) => ({
@@ -741,7 +633,7 @@ export function makeRepo(database: Database = defaultDb) {
         }
       }
 
-      // 5. Batch-insert alerts.
+      // 4. Batch-insert alerts.
       if (input.alertInserts.length === 0) return [];
       return tx
         .insert(alerts)
@@ -797,15 +689,11 @@ export function makeRepo(database: Database = defaultDb) {
   }
 
   return {
-    findByNationalId,
-    findAllByNationalId,
-    findAllByNationalIds,
     findByPhoneNumbers,
     findByFullname,
     findById,
     insertPersonWithPhones,
     addPhonesToPerson,
-    updatePersonNationalId,
     insertAlert,
     updatePersonFields,
     removePhones,
@@ -820,7 +708,6 @@ export function makeRepo(database: Database = defaultDb) {
     reassignContactPageEntriesPerson,
     reassignAuditPerson,
     deletePerson,
-    findOtherByNationalId,
     findOtherByPhoneNumbers,
     findOtherByFullname,
     countOpenAlertsForPersons,

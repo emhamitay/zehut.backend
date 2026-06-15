@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeTestDb, type TestDb } from "../../../test/setup";
-import { makeRepo } from "../repo";
+import { makeRepo, type Repo } from "../repo";
 import { updatePerson } from "../update";
 import { commitContacts } from "../service";
 import { users } from "../../db/schema";
@@ -21,15 +21,19 @@ afterEach(async () => {
   await tdb.close();
 });
 
+async function onlyByPhone(repo: Repo, phone: string) {
+  return (await repo.findByPhoneNumbers([phone]))[0]!;
+}
+
 describe("updatePerson", () => {
   test("updates fullname and writes audit row with reason", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "111", fullname: "Alise", phone: ["0500000000"] }],
+      [{ fullname: "Alise", phone: ["0500000000"] }],
       "seed.xlsx",
       repo
     );
-    const person = (await repo.findByNationalId("111"))!;
+    const person = await onlyByPhone(repo, "0500000000");
     const result = await updatePerson(
       {
         personId: person.id,
@@ -49,19 +53,19 @@ describe("updatePerson", () => {
     expect(result.audit[0].reason).toBe("spoke on phone, real name is Alice");
   });
 
-  test("rejects when nationalId collides with another person", async () => {
+  test("rejects when adding a phone that belongs to another person with a different name", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: "111", fullname: "Alice", phone: ["0500000001"] },
-        { id: "222", fullname: "Bob", phone: ["0500000002"] },
+        { fullname: "Alice", phone: ["0500000001"] },
+        { fullname: "Bob", phone: ["0500000002"] },
       ],
       "seed.xlsx",
       repo
     );
-    const alice = (await repo.findByNationalId("111"))!;
+    const alice = await onlyByPhone(repo, "0500000001");
     const result = await updatePerson(
-      { personId: alice.id, nationalId: "222" },
+      { personId: alice.id, phones: { add: ["0500000002"] } },
       userId,
       repo
     );
@@ -69,51 +73,35 @@ describe("updatePerson", () => {
     if (result.ok) throw new Error("expected reject");
     if ("notFound" in result) throw new Error("expected conflicts");
     expect(result.conflicts.length).toBeGreaterThan(0);
+    expect(result.conflicts[0].kind).toBe("phone_match_name_differs");
 
     const reloaded = (await repo.findById(alice.id))!;
-    expect(reloaded.nationalId).toBe("111");
-  });
-
-  test("rejects when adding a phone that belongs to another person with a different name", async () => {
-    const repo = makeRepo(tdb.db);
-    await commitContacts(
-      [
-        { id: "111", fullname: "Alice", phone: ["0500000001"] },
-        { id: "222", fullname: "Bob", phone: ["0500000002"] },
-      ],
-      "seed.xlsx",
-      repo
-    );
-    const alice = (await repo.findByNationalId("111"))!;
-    const result = await updatePerson(
-      { personId: alice.id, phones: { add: ["0500000002"] } },
-      userId,
-      repo
-    );
-    expect(result.ok).toBe(false);
+    expect(reloaded.phones).toHaveLength(1);
   });
 
   test("deletes an open alert whose cause is fixed and records an alert_closed audit row", async () => {
     const repo = makeRepo(tdb.db);
-    // Two rows with the same ID and different names -> two citizens plus
-    // a symmetric id_data_error alert. The collision is the shared ID;
-    // fixing it means changing one side's national ID.
+    // Two rows sharing a phone with different names -> two citizens plus a
+    // symmetric phone_match_name_differs alert. Fixing it means removing
+    // the shared phone from one side.
     await commitContacts(
       [
-        { id: "111", fullname: "Alice", phone: ["0500000001"] },
-        { id: "111", fullname: "Bob", phone: ["0500000002"] },
+        { fullname: "Alice", phone: ["0500000001"] },
+        { fullname: "Bob", phone: ["0500000001", "0500000002"] },
       ],
       "seed.xlsx",
       repo
     );
-    const both = await repo.findAllByNationalId("111");
-    expect(both).toHaveLength(2);
-    const bob = both.find((p) => p.fullname === "Bob")!;
-    let openBefore = await repo.listOpenAlerts(bob.id);
+    const bob = (await repo.findByFullname("Bob"))[0]!;
+    const openBefore = await repo.listOpenAlerts(bob.id);
     expect(openBefore.length).toBeGreaterThan(0);
 
     const result = await updatePerson(
-      { personId: bob.id, nationalId: "222", reason: "typo in ID, correct is 222" },
+      {
+        personId: bob.id,
+        phones: { remove: ["0500000001"] },
+        reason: "wrong shared number",
+      },
       userId,
       repo
     );
@@ -134,11 +122,11 @@ describe("updatePerson", () => {
   test("removes a phone and writes a phone_removed audit row", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "111", fullname: "Alice", phone: ["0500000001", "0500000002"] }],
+      [{ fullname: "Alice", phone: ["0500000001", "0500000002"] }],
       "seed.xlsx",
       repo
     );
-    const alice = (await repo.findByNationalId("111"))!;
+    const alice = await onlyByPhone(repo, "0500000001");
     const result = await updatePerson(
       {
         personId: alice.id,
@@ -168,12 +156,12 @@ describe("updatePerson", () => {
     expect("notFound" in result).toBe(true);
   });
 
-  test("rejects when both null-id persons collide via shared phone", async () => {
+  test("rejects when two homonyms collide via a shared phone", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: null, fullname: "David", phone: ["0501111111"] },
-        { id: null, fullname: "David", phone: ["0502222222"] },
+        { fullname: "David", phone: ["0501111111"] },
+        { fullname: "David", phone: ["0502222222"] },
       ],
       "seed.xlsx",
       repo
@@ -200,15 +188,14 @@ describe("updatePerson", () => {
     expect(reloaded.phones).toHaveLength(1);
   });
 
-  test("name-only matches are no longer a blocker — renaming to a homonym just saves", async () => {
-    // The product rule changed: a bare name match (no shared nationalId
-    // and no shared phone) is not a uniqueness violation. Homonyms are
-    // real, and the system stays silent about them.
+  test("name-only matches are not a blocker — renaming to a homonym just saves", async () => {
+    // A bare name match (no shared phone) is not a uniqueness violation.
+    // Homonyms are real, and the system stays silent about them.
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: null, fullname: "Yossi Cohen", phone: ["0503333333"] },
-        { id: null, fullname: "Shimon Cohen", phone: ["0504444444"] },
+        { fullname: "Yossi Cohen", phone: ["0503333333"] },
+        { fullname: "Shimon Cohen", phone: ["0504444444"] },
       ],
       "seed.xlsx",
       repo
@@ -233,16 +220,15 @@ describe("updatePerson", () => {
   test("returns audit rows for all changes when several fields change at once", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "555", fullname: "Original", phone: ["0506666666"] }],
+      [{ fullname: "Original", phone: ["0506666666"] }],
       "seed.xlsx",
       repo
     );
-    const person = (await repo.findByNationalId("555"))!;
+    const person = await onlyByPhone(repo, "0506666666");
     const result = await updatePerson(
       {
         personId: person.id,
         fullname: "Updated",
-        nationalId: "556",
         phones: { add: ["0507777777"], remove: ["0506666666"] },
         reason: "full rewrite",
       },
@@ -258,23 +244,22 @@ describe("updatePerson", () => {
       },
       {}
     );
-    expect(fieldCounts.nationalId).toBe(1);
     expect(fieldCounts.fullname).toBe(1);
     expect(fieldCounts.phone_added).toBe(1);
     expect(fieldCounts.phone_removed).toBe(1);
 
     const history = await repo.listAudit(person.id);
-    expect(history.length).toBe(4);
+    expect(history.length).toBe(3);
   });
 
   test("allows editing back to its own values without conflict", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "999", fullname: "Solo", phone: ["0505555555"] }],
+      [{ fullname: "Solo", phone: ["0505555555"] }],
       "seed.xlsx",
       repo
     );
-    const solo = (await repo.findByNationalId("999"))!;
+    const solo = await onlyByPhone(repo, "0505555555");
     const result = await updatePerson(
       {
         personId: solo.id,

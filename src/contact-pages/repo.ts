@@ -44,7 +44,7 @@ export function makeRepo(database: Database = defaultDb) {
             )
         )
       )
-      .orderBy(asc(persons.createdAt), asc(persons.nationalId))
+      .orderBy(asc(persons.createdAt), asc(persons.id))
       .limit(limit);
     return rows.map((r) => r.id);
   }

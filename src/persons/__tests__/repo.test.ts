@@ -18,7 +18,6 @@ describe("repo", () => {
   test("insertPersonWithPhones persists person + phones", async () => {
     const repo = makeRepo(tdb.db);
     const person = await repo.insertPersonWithPhones({
-      nationalId: "123",
       fullname: "Alice",
       sourceFile: "f.xlsx",
       phones: [{ raw: "050-000-0000", normalized: "0500000000" }],
@@ -37,7 +36,6 @@ describe("repo", () => {
   test("findByPhoneNumbers matches normalized numbers", async () => {
     const repo = makeRepo(tdb.db);
     await repo.insertPersonWithPhones({
-      nationalId: "1",
       fullname: "A",
       phones: [{ raw: "0500000000", normalized: "0500000000" }],
     });
@@ -49,7 +47,6 @@ describe("repo", () => {
   test("findByFullname is case-insensitive", async () => {
     const repo = makeRepo(tdb.db);
     await repo.insertPersonWithPhones({
-      nationalId: "1",
       fullname: "Alice",
       phones: [],
     });
@@ -60,7 +57,6 @@ describe("repo", () => {
   test("addPhonesToPerson returns only newly added phones", async () => {
     const repo = makeRepo(tdb.db);
     const p = await repo.insertPersonWithPhones({
-      nationalId: "1",
       fullname: "A",
       phones: [{ raw: "0500000000", normalized: "0500000000" }],
     });
@@ -75,47 +71,44 @@ describe("repo", () => {
   test("insertAlert stores alert", async () => {
     const repo = makeRepo(tdb.db);
     const p = await repo.insertPersonWithPhones({
-      nationalId: "1",
       fullname: "A",
       phones: [],
     });
     const a = await repo.insertAlert({
-      kind: "name_mismatch_on_id",
+      kind: "phone_match_name_differs",
       personId: p.id,
       details: {
-        matchedOn: "id",
+        matchedOn: "phone",
         mismatchedFields: ["name"],
-        incoming: { id: "1", fullname: "A", phone: [] },
+        incoming: { fullname: "A", phone: [] },
       },
       sourceFile: "x",
     });
     expect(a.id).toBeTruthy();
-    expect(a.kind).toBe("name_mismatch_on_id");
+    expect(a.kind).toBe("phone_match_name_differs");
   });
 
   test("listOpenAlerts is viewer-aware: relatedPerson is always the OTHER side", async () => {
     const repo = makeRepo(tdb.db);
-    // Two people who share a phone but have different IDs. The alert is
+    // Two people who share a phone but have different names. The alert is
     // stored as personId=second, relatedPersonId=first (the order the
     // ingest pipeline produces). Both citizens must see the *other* one.
     const first = await repo.insertPersonWithPhones({
-      nationalId: "111",
       fullname: "David",
       phones: [{ raw: "0500000000", normalized: "0500000000" }],
     });
     const second = await repo.insertPersonWithPhones({
-      nationalId: "222",
       fullname: "Naomi",
       phones: [{ raw: "0500000000", normalized: "0500000000" }],
     });
     await repo.insertAlert({
-      kind: "id_name_mismatch_on_phone",
+      kind: "phone_match_name_differs",
       personId: second.id,
       relatedPersonId: first.id,
       details: {
         matchedOn: "phone",
-        mismatchedFields: ["id", "name"],
-        incoming: { id: "222", fullname: "Naomi", phone: ["0500000000"] },
+        mismatchedFields: ["name"],
+        incoming: { fullname: "Naomi", phone: ["0500000000"] },
       },
       sourceFile: "x",
     });

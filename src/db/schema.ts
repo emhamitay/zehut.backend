@@ -12,33 +12,22 @@ import { relations } from "drizzle-orm";
 import type { Contact } from "../lib/types";
 
 export type AlertDetails = {
-  matchedOn: "id" | "name" | "phone";
-  mismatchedFields: ("id" | "name" | "phone")[];
+  matchedOn: "name" | "phone";
+  mismatchedFields: ("name" | "phone")[];
   incoming: Contact;
 };
 
-// national_id is intentionally NOT unique. Two import rows with the same
-// ID and different names are treated as two separate citizens and the
-// collision is surfaced as a symmetric data-error alert — same shape as
-// a phone collision. Coordinators resolve the typo manually.
-export const persons = pgTable(
-  "persons",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    nationalId: text("national_id"),
-    fullname: text("fullname"),
-    sourceFile: text("source_file"),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (t) => ({
-    nationalIdIdx: index("persons_national_id_idx").on(t.nationalId),
-  })
-);
+export const persons = pgTable("persons", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  fullname: text("fullname"),
+  sourceFile: text("source_file"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
 
 export const phones = pgTable(
   "phones",
@@ -59,36 +48,16 @@ export const phones = pgTable(
   })
 );
 
+// Live alerts describe a uniqueness violation on a phone number: either a
+// different citizen already owns one of the incoming phones
+// (cross_person_mismatch), or a phone matched an existing citizen whose
+// name differs (phone_match_name_differs). A bare name collision is never
+// flagged — homonyms are real and silent.
 export const ALERT_KINDS = [
-  "name_mismatch_on_id",
-  "name_phone_mismatch_on_id",
-  "id_mismatch_name_phone_match",
-  "id_name_mismatch_on_phone",
   "cross_person_mismatch",
-  "phone_match_name_differs_no_id",
+  "phone_match_name_differs",
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
-
-// Two user-facing error types are derived from AlertKind. Same name on
-// two records with no shared unique field is no longer flagged at all —
-// homonyms are real and silent. Live alerts only describe a uniqueness
-// violation on `nationalId` or on a phone number.
-export type DataErrorType = "id_data_error" | "phone_data_error";
-
-export function dataErrorTypeFromAlertKind(kind: AlertKind): DataErrorType {
-  switch (kind) {
-    // Two records share the same nationalId but names differ.
-    case "name_mismatch_on_id":
-    case "name_phone_mismatch_on_id":
-      return "id_data_error";
-    // Two records share a phone but appear to be different people.
-    case "id_mismatch_name_phone_match":
-    case "id_name_mismatch_on_phone":
-    case "cross_person_mismatch":
-    case "phone_match_name_differs_no_id":
-      return "phone_data_error";
-  }
-}
 
 export const alerts = pgTable(
   "alerts",
@@ -114,7 +83,6 @@ export const alerts = pgTable(
 );
 
 export const PERSON_AUDIT_FIELDS = [
-  "nationalId",
   "fullname",
   "phone_added",
   "phone_removed",

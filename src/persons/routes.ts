@@ -20,12 +20,7 @@ import {
 import type { AuthService } from "../auth/service";
 import { currentUserIdFromRequest, requireAuth } from "../auth/guard";
 
-const SEARCH_BY_VALUES: ReadonlyArray<SearchBy> = [
-  "auto",
-  "id",
-  "phone",
-  "name",
-];
+const SEARCH_BY_VALUES: ReadonlyArray<SearchBy> = ["auto", "phone", "name"];
 
 export function personsRoutes(auth: AuthService) {
   return new Elysia({ prefix: "/api/persons" })
@@ -136,9 +131,6 @@ export function personsRoutes(auth: AuthService) {
         const result = await updatePerson(
           {
             personId: params.id,
-            ...(body.nationalId !== undefined
-              ? { nationalId: body.nationalId }
-              : {}),
             ...(body.fullname !== undefined ? { fullname: body.fullname } : {}),
             ...(body.phones !== undefined ? { phones: body.phones } : {}),
             ...(body.reason !== undefined ? { reason: body.reason } : {}),

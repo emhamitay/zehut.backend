@@ -40,7 +40,6 @@ export async function deletePersonAction(
       field: "deleted",
       oldValue: victim.id,
       newValue: JSON.stringify({
-        nationalId: victim.nationalId,
         fullname: victim.fullname,
         phones: victim.phones,
       }),

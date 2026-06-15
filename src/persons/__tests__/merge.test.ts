@@ -27,8 +27,8 @@ describe("mergePersons", () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: null, fullname: "David", phone: ["0500000001"] },
-        { id: null, fullname: "David Cohen", phone: ["0500000002"] },
+        { fullname: "David", phone: ["0500000001"] },
+        { fullname: "David Cohen", phone: ["0500000002"] },
       ],
       "seed.xlsx",
       repo
@@ -50,13 +50,9 @@ describe("mergePersons", () => {
       {
         survivorId: survivor.id,
         victimId: victim.id,
-        resolved: {
-          nationalId: null,
-          fullname: "David Cohen",
-        },
+        resolved: { fullname: "David Cohen" },
         phonesToKeep: ["0500000001", "0500000002"],
         reason: "same person, two excel rows",
-        confirmDifferentIds: false,
       },
       userId,
       repo
@@ -78,41 +74,67 @@ describe("mergePersons", () => {
     expect(result.audit.some((r) => r.field === "merged_from")).toBe(true);
   });
 
-  test("rejects merge with differing national_ids unless confirmed", async () => {
+  test("merging two citizens that shared a phone clears the symmetric alert", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: "111", fullname: "Alice", phone: ["0500000001"] },
-        { id: "222", fullname: "Alice", phone: ["0500000002"] },
+        { fullname: "Alice", phone: ["0500000001"] },
+        { fullname: "Alice K.", phone: ["0500000001"] },
       ],
       "seed.xlsx",
       repo
     );
-    const a = (await repo.findByNationalId("111"))!;
-    const b = (await repo.findByNationalId("222"))!;
+    const both = await repo.findByPhoneNumbers(["0500000001"]);
+    expect(both).toHaveLength(2);
+    const survivor = both.find((p) => p.fullname === "Alice")!;
+    const victim = both.find((p) => p.fullname === "Alice K.")!;
+    expect((await repo.listOpenAlerts(survivor.id)).length).toBeGreaterThan(0);
+
     const result = await mergePersons(
       {
-        survivorId: a.id,
-        victimId: b.id,
-        resolved: { nationalId: "111", fullname: "Alice" },
-        phonesToKeep: ["0500000001", "0500000002"],
-        reason: "same",
-        confirmDifferentIds: false,
+        survivorId: survivor.id,
+        victimId: victim.id,
+        resolved: { fullname: "Alice" },
+        phonesToKeep: ["0500000001"],
+        reason: "same person",
+      },
+      userId,
+      repo
+    );
+    expect(result.ok).toBe(true);
+    expect(await repo.listOpenAlerts(survivor.id)).toHaveLength(0);
+  });
+
+  test("rejects merging a person into itself", async () => {
+    const repo = makeRepo(tdb.db);
+    await commitContacts(
+      [{ fullname: "Solo", phone: ["0500000001"] }],
+      "seed.xlsx",
+      repo
+    );
+    const solo = (await repo.findByPhoneNumbers(["0500000001"]))[0];
+    const result = await mergePersons(
+      {
+        survivorId: solo.id,
+        victimId: solo.id,
+        resolved: { fullname: "Solo" },
+        phonesToKeep: ["0500000001"],
+        reason: "oops",
       },
       userId,
       repo
     );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected reject");
-    expect("error" in result && result.error).toBe("confirm_required");
+    expect("error" in result && result.error).toBe("same_person");
   });
 
   test("requires a reason", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: null, fullname: "A", phone: ["0500000001"] },
-        { id: null, fullname: "B", phone: ["0500000002"] },
+        { fullname: "A", phone: ["0500000001"] },
+        { fullname: "B", phone: ["0500000002"] },
       ],
       "seed.xlsx",
       repo
@@ -123,10 +145,9 @@ describe("mergePersons", () => {
       {
         survivorId: a.id,
         victimId: b.id,
-        resolved: { nationalId: null, fullname: "A" },
+        resolved: { fullname: "A" },
         phonesToKeep: ["0500000001", "0500000002"],
         reason: "   ",
-        confirmDifferentIds: false,
       },
       userId,
       repo

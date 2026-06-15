@@ -22,7 +22,6 @@ function normalize(c: Contact): NormalizedContact {
     .filter((p) => isValidPhone(p.normalized));
   return {
     raw: c,
-    nationalId: c.id?.trim() || null,
     fullname: c.fullname?.trim() || null,
     phones,
   };
@@ -70,40 +69,26 @@ export async function commitContacts(
 ): Promise<CommitResult> {
   const normalized = contacts.map(normalize);
 
-  // Collect every unique nationalId and phone across the whole batch so we
-  // can fetch all relevant DB persons in two queries instead of N×2.
-  const nationalIdSet = new Set<string>();
+  // Collect every unique phone across the whole batch so we can fetch all
+  // relevant DB persons in one query instead of N.
   const phoneSet = new Set<string>();
   for (const c of normalized) {
-    if (c.nationalId) nationalIdSet.add(c.nationalId);
     for (const p of c.phones) phoneSet.add(p.normalized);
   }
 
-  const [dbByIds, dbByPhone] = await Promise.all([
-    nationalIdSet.size > 0
-      ? repo.findAllByNationalIds([...nationalIdSet])
-      : Promise.resolve([] as PersonWithPhones[]),
+  const dbByPhone =
     phoneSet.size > 0
-      ? repo.findByPhoneNumbers([...phoneSet])
-      : Promise.resolve([] as PersonWithPhones[]),
-  ]);
+      ? await repo.findByPhoneNumbers([...phoneSet])
+      : ([] as PersonWithPhones[]);
 
-  // Working indexes: seeded from DB, updated after each row so that row N
+  // Working index: seeded from DB, updated after each row so that row N
   // sees what earlier rows in the same file inserted/modified.
-  const workingByNationalId = new Map<string, PersonWithPhones[]>();
   const workingByPhone = new Map<string, PersonWithPhones>();
   const phoneNormalizedByRaw = new Map<string, string>();
   // Tracks phones queued for an existing person within this batch (not yet in DB).
   const pendingPhonesByPersonId = new Map<string, Set<string>>();
 
   function indexPerson(p: PersonWithPhones): void {
-    if (p.nationalId) {
-      const list = workingByNationalId.get(p.nationalId) ?? [];
-      if (!list.some((e) => e.id === p.id)) {
-        list.push(p);
-        workingByNationalId.set(p.nationalId, list);
-      }
-    }
     for (const raw of p.phones) {
       const norm = normalizePhone(raw);
       phoneNormalizedByRaw.set(raw, norm);
@@ -112,7 +97,7 @@ export async function commitContacts(
   }
 
   const seenIds = new Set<string>();
-  for (const p of [...dbByIds, ...dbByPhone]) {
+  for (const p of dbByPhone) {
     if (!seenIds.has(p.id)) {
       seenIds.add(p.id);
       indexPerson(p);
@@ -122,12 +107,10 @@ export async function commitContacts(
   // Accumulated write operations, flushed in a single transaction after the loop.
   const personInserts: {
     id: string;
-    nationalId: string | null;
     fullname: string | null;
     phones: { raw: string; normalized: string }[];
   }[] = [];
   const phoneAdds: { personId: string; phones: { raw: string; normalized: string }[] }[] = [];
-  const nationalIdUpdates: { personId: string; nationalId: string }[] = [];
   const alertInserts: {
     kind: AlertKind;
     personId: string;
@@ -148,10 +131,6 @@ export async function commitContacts(
       continue;
     }
 
-    const byIds = c.nationalId
-      ? (workingByNationalId.get(c.nationalId) ?? [])
-      : [];
-
     const byPhoneMap = new Map<string, PersonWithPhones>();
     for (const p of c.phones) {
       const match = workingByPhone.get(p.normalized);
@@ -159,8 +138,7 @@ export async function commitContacts(
     }
     const byPhone = [...byPhoneMap.values()];
 
-    // byName is unused inside decide() (name-only is not a collision), pass [].
-    const decision = decide(c, byIds, byPhone, [], phoneNormalizedByRaw);
+    const decision = decide(c, byPhone, phoneNormalizedByRaw);
 
     if (decision.kind === "noop") {
       result.ignored += 1;
@@ -172,14 +150,13 @@ export async function commitContacts(
       const now = new Date();
       const person: PersonWithPhones = {
         id,
-        nationalId: c.nationalId,
         fullname: c.fullname,
         sourceFile,
         createdAt: now,
         updatedAt: now,
         phones: c.phones.map((p) => p.raw),
       };
-      personInserts.push({ id, nationalId: c.nationalId, fullname: c.fullname, phones: c.phones });
+      personInserts.push({ id, fullname: c.fullname, phones: c.phones });
       result.inserted.push(person);
       indexPerson(person);
 
@@ -222,42 +199,12 @@ export async function commitContacts(
       }
       continue;
     }
-
-    if (decision.kind === "backfill_id_and_add_phones") {
-      const person = decision.person;
-      nationalIdUpdates.push({ personId: person.id, nationalId: decision.nationalId });
-
-      // Update working nationalId index immediately so later rows see the backfill.
-      const updatedPerson: PersonWithPhones = { ...person, nationalId: decision.nationalId };
-      const list = workingByNationalId.get(decision.nationalId) ?? [];
-      if (!list.some((e) => e.id === updatedPerson.id)) {
-        list.push(updatedPerson);
-        workingByNationalId.set(decision.nationalId, list);
-      }
-
-      const newPhones = newPhonesForPerson(person, c.phones, pendingPhonesByPersonId);
-      if (newPhones.length > 0) {
-        const updated = applyPhonesInMemory(
-          updatedPerson,
-          newPhones,
-          pendingPhonesByPersonId,
-          workingByPhone,
-          phoneNormalizedByRaw
-        );
-        result.phoneAdded.push({ person: updated, addedPhones: newPhones.map((p) => p.raw) });
-        phoneAdds.push({ personId: person.id, phones: newPhones });
-      } else if (decision.alerts.length === 0) {
-        result.ignored += 1;
-      }
-      continue;
-    }
   }
 
   // Flush all accumulated operations in a single transaction.
   result.alerts = await repo.batchCommit({
     personInserts,
     phoneAdds,
-    nationalIdUpdates,
     alertInserts,
     sourceFile,
   });
