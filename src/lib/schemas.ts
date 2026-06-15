@@ -1,14 +1,12 @@
 import { t } from "elysia";
 
 export const ContactSchema = t.Object({
-  id: t.Union([t.String(), t.Null()]),
   fullname: t.Union([t.String(), t.Null()]),
   phone: t.Array(t.String()),
 });
 
 export const PersonWithPhonesSchema = t.Object({
   id: t.String(),
-  nationalId: t.Union([t.String(), t.Null()]),
   fullname: t.Union([t.String(), t.Null()]),
   sourceFile: t.Union([t.String(), t.Null()]),
   createdAt: t.Union([t.String(), t.Date()]),
@@ -17,37 +15,22 @@ export const PersonWithPhonesSchema = t.Object({
 });
 
 const MismatchedFieldSchema = t.Union([
-  t.Literal("id"),
   t.Literal("name"),
   t.Literal("phone"),
 ]);
 
 export const AlertKindSchema = t.Union([
-  t.Literal("name_mismatch_on_id"),
-  t.Literal("name_phone_mismatch_on_id"),
-  t.Literal("id_mismatch_name_phone_match"),
-  t.Literal("id_name_mismatch_on_phone"),
   t.Literal("cross_person_mismatch"),
-  t.Literal("phone_match_name_differs_no_id"),
-]);
-
-export const DataErrorTypeSchema = t.Union([
-  t.Literal("id_data_error"),
-  t.Literal("phone_data_error"),
+  t.Literal("phone_match_name_differs"),
 ]);
 
 export const AlertSchema = t.Object({
   id: t.String(),
   kind: AlertKindSchema,
-  errorType: DataErrorTypeSchema,
   personId: t.String(),
   relatedPersonId: t.Union([t.String(), t.Null()]),
   details: t.Object({
-    matchedOn: t.Union([
-      t.Literal("id"),
-      t.Literal("name"),
-      t.Literal("phone"),
-    ]),
+    matchedOn: t.Union([t.Literal("name"), t.Literal("phone")]),
     mismatchedFields: t.Array(MismatchedFieldSchema),
     incoming: ContactSchema,
   }),
@@ -91,7 +74,6 @@ export const CredentialsSchema = t.Object({
 });
 
 export const PersonAuditFieldSchema = t.Union([
-  t.Literal("nationalId"),
   t.Literal("fullname"),
   t.Literal("phone_added"),
   t.Literal("phone_removed"),
@@ -105,7 +87,6 @@ export const DeletePersonInputSchema = t.Object({
 });
 
 export const UpdatePersonInputSchema = t.Object({
-  nationalId: t.Optional(t.Union([t.String(), t.Null()])),
   fullname: t.Optional(t.Union([t.String(), t.Null()])),
   phones: t.Optional(
     t.Object({
@@ -120,12 +101,11 @@ const ConflictDetailSchema = t.Object({
   kind: t.String(),
   otherPerson: t.Object({
     id: t.String(),
-    nationalId: t.Union([t.String(), t.Null()]),
     fullname: t.Union([t.String(), t.Null()]),
     phones: t.Array(t.String()),
   }),
   mismatchedFields: t.Array(
-    t.Union([t.Literal("id"), t.Literal("name"), t.Literal("phone")])
+    t.Union([t.Literal("name"), t.Literal("phone")])
   ),
   collidingValue: t.Union([t.String(), t.Null()]),
 });
@@ -157,12 +137,10 @@ export const MergePersonsInputSchema = t.Object({
   survivorId: t.String(),
   victimId: t.String(),
   resolved: t.Object({
-    nationalId: t.Union([t.String(), t.Null()]),
     fullname: t.Union([t.String(), t.Null()]),
   }),
   phonesToKeep: t.Array(t.String()),
   reason: t.String(),
-  confirmDifferentIds: t.Boolean(),
 });
 
 export const MergePersonsOkSchema = t.Object({
@@ -177,11 +155,7 @@ export const SearchHitSchema = t.Object({
 });
 
 export const SearchResultSchema = t.Object({
-  resolvedBy: t.Union([
-    t.Literal("id"),
-    t.Literal("phone"),
-    t.Literal("name"),
-  ]),
+  resolvedBy: t.Union([t.Literal("phone"), t.Literal("name")]),
   hits: t.Array(SearchHitSchema),
 });
 

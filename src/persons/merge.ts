@@ -6,12 +6,10 @@ export type MergePersonsInput = {
   survivorId: string;
   victimId: string;
   resolved: {
-    nationalId: string | null;
     fullname: string | null;
   };
   phonesToKeep: string[];
   reason: string;
-  confirmDifferentIds: boolean;
 };
 
 export type MergeResult =
@@ -21,7 +19,6 @@ export type MergeResult =
       audit: PersonAuditRow[];
     }
   | { ok: false; error: "not_found" }
-  | { ok: false; error: "confirm_required"; reason: "differing_national_ids" }
   | { ok: false; error: "missing_reason" }
   | { ok: false; error: "same_person" };
 
@@ -46,46 +43,17 @@ export async function mergePersons(
   const victim = await repo.findById(input.victimId);
   if (!survivor || !victim) return { ok: false, error: "not_found" };
 
-  if (
-    survivor.nationalId &&
-    victim.nationalId &&
-    survivor.nationalId !== victim.nationalId &&
-    !input.confirmDifferentIds
-  ) {
-    return {
-      ok: false,
-      error: "confirm_required",
-      reason: "differing_national_ids",
-    };
-  }
-
-  const resolvedNationalId = trimOrNull(input.resolved.nationalId);
   const resolvedFullname = trimOrNull(input.resolved.fullname);
 
   const auditRows: {
     personId: string;
     userId: string;
-    field:
-      | "nationalId"
-      | "fullname"
-      | "phone_added"
-      | "phone_removed"
-      | "merged_from";
+    field: "fullname" | "phone_added" | "phone_removed" | "merged_from";
     oldValue: string | null;
     newValue: string | null;
     reason: string | null;
   }[] = [];
 
-  if ((survivor.nationalId ?? null) !== resolvedNationalId) {
-    auditRows.push({
-      personId: survivor.id,
-      userId,
-      field: "nationalId",
-      oldValue: survivor.nationalId,
-      newValue: resolvedNationalId,
-      reason,
-    });
-  }
   if ((survivor.fullname ?? null) !== resolvedFullname) {
     auditRows.push({
       personId: survivor.id,
@@ -96,10 +64,7 @@ export async function mergePersons(
       reason,
     });
   }
-  await repo.updatePersonFields(survivor.id, {
-    nationalId: resolvedNationalId,
-    fullname: resolvedFullname,
-  });
+  await repo.updatePersonFields(survivor.id, { fullname: resolvedFullname });
 
   const survivorPhonesNormalized = new Set(
     survivor.phones.map((raw) => normalizePhone(raw))
@@ -162,7 +127,6 @@ export async function mergePersons(
     field: "merged_from",
     oldValue: victim.id,
     newValue: JSON.stringify({
-      nationalId: victim.nationalId,
       fullname: victim.fullname,
       phones: victim.phones,
     }),

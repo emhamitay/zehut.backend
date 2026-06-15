@@ -42,7 +42,6 @@ async function seedUser(username: string): Promise<string> {
 }
 
 type SeedPerson = {
-  nationalId?: string | null;
   fullname?: string | null;
   phones?: string[];
   createdAt?: Date;
@@ -52,7 +51,6 @@ async function seedPerson(p: SeedPerson = {}): Promise<string> {
   const [row] = await tdb.db
     .insert(persons)
     .values({
-      nationalId: p.nationalId ?? null,
       fullname: p.fullname ?? null,
       ...(p.createdAt ? { createdAt: p.createdAt, updatedAt: p.createdAt } : {}),
     })
@@ -67,13 +65,13 @@ async function seedPerson(p: SeedPerson = {}): Promise<string> {
 
 async function seedAlert(personId: string, relatedPersonId: string) {
   await tdb.db.insert(alerts).values({
-    kind: "id_mismatch_name_phone_match",
+    kind: "phone_match_name_differs",
     personId,
     relatedPersonId,
     details: {
       matchedOn: "phone",
-      mismatchedFields: ["id"],
-      incoming: { id: null, fullname: null, phone: [] },
+      mismatchedFields: ["name"],
+      incoming: { fullname: null, phone: [] },
     },
   });
 }
@@ -87,7 +85,6 @@ describe("contact-pages service", () => {
     const base = new Date(2025, 0, 1);
     for (let i = 0; i < 8; i++) {
       await seedPerson({
-        nationalId: `id-${i}`,
         fullname: `Person ${i}`,
         phones: [`050000000${i}`],
         createdAt: new Date(base.getTime() + i * 1000),
@@ -111,7 +108,6 @@ describe("contact-pages service", () => {
     const base = new Date(2025, 0, 1);
     for (let i = 0; i < 10; i++) {
       await seedPerson({
-        nationalId: `id-${i}`,
         fullname: `P${i}`,
         createdAt: new Date(base.getTime() + i * 1000),
       });
@@ -133,19 +129,16 @@ describe("contact-pages service", () => {
     const userId = await seedUser("u");
     const base = new Date(2025, 0, 1);
     const a = await seedPerson({
-      nationalId: "A",
       fullname: "A",
       createdAt: new Date(base.getTime() + 1000),
     });
     const b = await seedPerson({
-      nationalId: "B",
       fullname: "B",
       createdAt: new Date(base.getTime() + 2000),
     });
     await seedAlert(a, b);
     for (let i = 0; i < 3; i++) {
       await seedPerson({
-        nationalId: `C${i}`,
         fullname: `C${i}`,
         createdAt: new Date(base.getTime() + 5000 + i * 1000),
       });
@@ -167,19 +160,16 @@ describe("contact-pages service", () => {
     const u2 = await seedUser("u2");
     const base = new Date(2025, 0, 1);
     const a = await seedPerson({
-      nationalId: "A",
       fullname: "A-name",
       createdAt: new Date(base.getTime() + 1000),
     });
     const b = await seedPerson({
-      nationalId: "B",
       fullname: "B-name",
       createdAt: new Date(base.getTime() + 999_000),
     });
     await seedAlert(a, b);
     for (let i = 0; i < 3; i++) {
       await seedPerson({
-        nationalId: `C${i}`,
         fullname: `C${i}`,
         createdAt: new Date(base.getTime() + 2000 + i * 1000),
       });
@@ -194,7 +184,6 @@ describe("contact-pages service", () => {
     expect(entryB!.crossPageWarnings).toHaveLength(1);
     const w = entryB!.crossPageWarnings[0];
     expect(w.otherPersonId).toBe(a);
-    expect(w.otherNationalId).toBe("A");
     expect(w.otherFullname).toBe("A-name");
     expect(w.otherPageId).toBe(p1.id);
     expect(w.otherPageNumber).toBe(1);
@@ -205,7 +194,7 @@ describe("contact-pages service", () => {
     const repo = makeRepo(tdb.db);
     const u1 = await seedUser("u1");
     const u2 = await seedUser("u2");
-    const p = await seedPerson({ nationalId: "X", fullname: "X" });
+    const p = await seedPerson({ fullname: "X" });
 
     await repo.insertPageWithEntries({
       season: SEASON,
@@ -228,7 +217,6 @@ describe("contact-pages service", () => {
     const base = new Date(2025, 0, 1);
     for (let i = 0; i < 3; i++) {
       await seedPerson({
-        nationalId: `id-${i}`,
         fullname: `P${i}`,
         createdAt: new Date(base.getTime() + i * 1000),
       });
@@ -258,12 +246,10 @@ describe("contact-pages service", () => {
     const u = await seedUser("u");
     const base = new Date(2025, 0, 1);
     const a = await seedPerson({
-      nationalId: "A",
       fullname: "A",
       createdAt: new Date(base.getTime() + 1000),
     });
     const b = await seedPerson({
-      nationalId: "B",
       fullname: "B",
       createdAt: new Date(base.getTime() + 2000),
     });
@@ -287,7 +273,7 @@ describe("contact-pages service", () => {
     const service = makeService(repo);
     const u1 = await seedUser("u1");
     const u2 = await seedUser("u2");
-    await seedPerson({ nationalId: "1", fullname: "P" });
+    await seedPerson({ fullname: "P" });
     const page = await service.generatePageForUser(u1, config({ rowsPerPage: 1 }));
     expect(await service.getPageForUser(page.id, u2)).toBeNull();
   });
@@ -300,7 +286,7 @@ describe("contact-pages service", () => {
     const base = new Date(2025, 0, 1);
     for (let i = 0; i < 3; i++) {
       await seedPerson({
-        nationalId: `${i}`,
+        fullname: `P${i}`,
         createdAt: new Date(base.getTime() + i * 1000),
       });
     }
@@ -326,7 +312,6 @@ describe("contact-pages service", () => {
     const service = makeService(repo);
     const u = await seedUser("u");
     await seedPerson({
-      nationalId: "X",
       fullname: "X",
       phones: ["0500000000", "0511111111"],
     });

@@ -12,9 +12,9 @@ Organizations frequently collect the same people across many inconsistent source
 
 Zehut handles the full lifecycle:
 
-- **Extract** structured contacts (`{ id, fullname, phone[] }`) from raw Excel rows or document text.
-- **Match** each incoming contact against the existing database by national ID, phone, and name.
-- **Decide** automatically whether to *insert*, *enrich* (add phones / backfill a missing ID), or *flag for human review* — using conservative rules that never merge two records unless it can prove they are the same person.
+- **Extract** structured contacts (`{ fullname, phone[] }`) from raw Excel rows or document text.
+- **Match** each incoming contact against the existing database by phone number — the sole identifier.
+- **Decide** automatically whether to *insert*, *enrich* (add phones), or *flag for human review* — using conservative rules that never merge two records unless it can prove they are the same person.
 - **Track** every change in an audit trail, support reviewed manual merges, and generate printable contact pages per season while warning about suspected cross-page duplicates.
 
 ---
@@ -50,21 +50,16 @@ Three layers, strictly separated:
 
 ## The matching engine
 
-The heart of the system is [`persons/match.ts`](src/persons/match.ts). Given an incoming contact and the candidate records that match it by ID, phone, or name, `decide()` returns one of: `insert`, `noop`, `add_phones`, `backfill_id_and_add_phones`, or `alert_only`.
+The heart of the system is [`persons/match.ts`](src/persons/match.ts). The **phone number is the only identifier**. Given an incoming contact and the existing records that already own one of its phones, `decide()` returns one of: `insert`, `noop`, or `add_phones`.
 
-The central design decision is **tri-state field comparison** — each field compares as `match`, `mismatch`, or `unknown`. A missing value is *unknown*, never a *mismatch*, so absent data can never fabricate a conflict. Two records are only ruled "definitely different people" when **both** carry an ID and those IDs differ.
+The central design decision is **tri-state field comparison** — the name compares as `match`, `mismatch`, or `unknown`. A missing value is *unknown*, never a *mismatch*, so absent data can never fabricate a conflict. A shared phone with a matching (or unknown) name is the same person; a shared phone with a *different* name keeps both records and raises an alert. A bare name match (no shared phone) is never a collision — homonyms are real and silent.
 
 When a conflict can't be auto-resolved, the engine raises a typed alert for human review instead of guessing:
 
 | Alert | Meaning |
 |-------|---------|
-| `name_mismatch_on_id` | Same ID, different name |
-| `name_phone_mismatch_on_id` | Same ID, different name and phone |
-| `id_mismatch_name_phone_match` | Same name + phone, different ID |
-| `id_name_mismatch_on_phone` | Same phone, different ID and name |
+| `phone_match_name_differs` | Same phone, different names — kept as two records |
 | `cross_person_mismatch` | An incoming phone already belongs to a different person |
-| `name_match_no_id` | Same name, but no ID on either side to confirm |
-| `phone_match_name_differs_no_id` | Same phone, different names, no IDs |
 
 Updates and merges re-evaluate open alerts and **auto-resolve** any whose underlying cause has been fixed, recording who resolved them and when.
 
@@ -75,7 +70,7 @@ Updates and merges re-evaluate open alerts and **auto-resolve** any whose underl
 - **Authentication** — JWT (HS256 via `jose`), hashed credentials (`Bun.password`), route guards, a first-run setup flow, and optional admin bootstrap from environment variables.
 - **Ingestion pipeline** — `POST /api/persons/commit` runs each contact through the matching engine and returns a structured summary of what was inserted, enriched, ignored, and flagged.
 - **LLM extraction** — `POST /api/extract` turns messy Excel rows or document text into structured contacts via OpenRouter, with strict shape validation on the model's JSON response.
-- **Reviewed merges** — conflicting records can be merged deliberately, consolidating phones, reassigning alerts/audit/page-entries, and requiring confirmation when national IDs differ.
+- **Reviewed merges** — conflicting records can be merged deliberately, consolidating phones and reassigning alerts/audit/page-entries.
 - **Audit & history** — every field change is recorded with old/new values, a reason, and the acting user.
 - **Contact pages** — generates per-season pages with a row budget, groups suspected duplicate pairs together (union-find), and surfaces cross-page warnings when a likely duplicate was already assigned to someone else's page. A unique `(season, person)` constraint prevents double-assignment.
 

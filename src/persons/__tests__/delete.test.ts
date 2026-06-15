@@ -26,11 +26,11 @@ describe("deletePersonAction", () => {
   test("rejects when reason is missing", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "111", fullname: "Alice", phone: ["0500000001"] }],
+      [{ fullname: "Alice", phone: ["0500000001"] }],
       "seed.xlsx",
       repo
     );
-    const alice = (await repo.findByNationalId("111"))!;
+    const alice = (await repo.findByPhoneNumbers(["0500000001"]))[0];
     const result = await deletePersonAction(
       { personId: alice.id, reason: "   " },
       userId,
@@ -62,15 +62,15 @@ describe("deletePersonAction", () => {
   test("deletes person and writes a surviving 'deleted' audit row", async () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
-      [{ id: "111", fullname: "Alice", phone: ["0500000001"] }],
+      [{ fullname: "Alice", phone: ["0500000001"] }],
       "seed.xlsx",
       repo
     );
-    const alice = (await repo.findByNationalId("111"))!;
+    const alice = (await repo.findByPhoneNumbers(["0500000001"]))[0];
     const result = await deletePersonAction(
       {
         personId: alice.id,
-        reason: "duplicate of citizen 222",
+        reason: "duplicate of another citizen",
       },
       userId,
       repo
@@ -79,7 +79,7 @@ describe("deletePersonAction", () => {
     if (!result.ok) throw new Error("expected ok");
     expect(result.audit).toHaveLength(1);
     expect(result.audit[0].field).toBe("deleted");
-    expect(result.audit[0].reason).toBe("duplicate of citizen 222");
+    expect(result.audit[0].reason).toBe("duplicate of another citizen");
     expect(result.audit[0].newValue).toContain("Alice");
 
     const reloaded = await repo.findById(alice.id);
@@ -90,13 +90,13 @@ describe("deletePersonAction", () => {
     const repo = makeRepo(tdb.db);
     await commitContacts(
       [
-        { id: "111", fullname: "Alice", phone: ["0500000001"] },
-        { id: null, fullname: "Bob", phone: ["0500000001"] },
+        { fullname: "Alice", phone: ["0500000001"] },
+        { fullname: "Bob", phone: ["0500000001"] },
       ],
       "seed.xlsx",
       repo
     );
-    const alice = (await repo.findByNationalId("111"))!;
+    const alice = (await repo.findByFullname("Alice"))[0];
     const bob = (await repo.findByFullname("Bob"))[0];
     expect(bob).toBeDefined();
 

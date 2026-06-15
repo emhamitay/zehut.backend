@@ -27,13 +27,11 @@ export function readConfig(env: Record<string, string | undefined> = Bun.env): C
 
 export type EntryView = {
   personId: string;
-  nationalId: string | null;
   fullname: string | null;
   phones: string[];
   pairGroupId: string | null;
   crossPageWarnings: {
     otherPersonId: string;
-    otherNationalId: string | null;
     otherFullname: string | null;
     otherPageId: string;
     otherPageNumber: number;
@@ -173,7 +171,6 @@ export function makeService(repo: Repo = defaultRepo) {
           const otherPerson = externalById.get(other);
           crossPageWarnings.push({
             otherPersonId: other,
-            otherNationalId: otherPerson?.nationalId ?? null,
             otherFullname: otherPerson?.fullname ?? null,
             otherPageId: assignment.contactPageId,
             otherPageNumber: assignment.pageNumber,
@@ -183,7 +180,6 @@ export function makeService(repo: Repo = defaultRepo) {
         }
         return {
           personId: p.id,
-          nationalId: p.nationalId,
           fullname: p.fullname,
           phones: phonesByPerson.get(p.id) ?? [],
           pairGroupId: pairGroupByPerson.get(p.id) ?? null,

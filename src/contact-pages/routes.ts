@@ -5,14 +5,12 @@ import { currentUserIdFromRequest, requireAuth } from "../auth/guard";
 
 const EntryViewSchema = t.Object({
   personId: t.String(),
-  nationalId: t.Union([t.String(), t.Null()]),
   fullname: t.Union([t.String(), t.Null()]),
   phones: t.Array(t.String()),
   pairGroupId: t.Union([t.String(), t.Null()]),
   crossPageWarnings: t.Array(
     t.Object({
       otherPersonId: t.String(),
-      otherNationalId: t.Union([t.String(), t.Null()]),
       otherFullname: t.Union([t.String(), t.Null()]),
       otherPageId: t.String(),
       otherPageNumber: t.Number(),

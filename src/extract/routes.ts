@@ -9,7 +9,7 @@ import { requireAuth } from "../auth/guard";
  *
  * Throws (like DATABASE_URL) when the variable is unset or is not a strict
  * boolean, so a misconfigured server fails loudly on startup rather than
- * silently leaking PII (names / national IDs / phones) to the LLM.
+ * silently leaking PII (names / phones) to the LLM.
  */
 export function parseUseAi(
   env: Record<string, string | undefined> = Bun.env

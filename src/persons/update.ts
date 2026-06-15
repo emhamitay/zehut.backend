@@ -10,29 +10,25 @@ import type { AlertKind, AlertRow, PersonAuditRow } from "../db/schema";
 
 export type UpdatePersonInput = {
   personId: string;
-  nationalId?: string | null;
   fullname?: string | null;
   phones?: { add?: string[]; remove?: string[] };
   reason?: string | null;
 };
 
-export type MismatchedField = "id" | "name" | "phone";
+export type MismatchedField = "name" | "phone";
 
 export type ConflictDetail = {
   kind: AlertKind;
   otherPerson: {
     id: string;
-    nationalId: string | null;
     fullname: string | null;
     phones: string[];
   };
   mismatchedFields: MismatchedField[];
-  // The exact value the candidate save tried to write that already exists
-  // on `otherPerson`. For an ID collision it's the shared nationalId;
-  // for a phone collision it's the specific phone the two candidates
-  // share (not just otherPerson.phones[0]). The frontend renders this
-  // verbatim in the save-error modal so the coordinator sees which value
-  // to change.
+  // The specific phone the candidate save tried to write that already
+  // exists on `otherPerson` (not just otherPerson.phones[0]). The frontend
+  // renders this verbatim in the save-error modal so the coordinator sees
+  // which value to change.
   collidingValue: string | null;
 };
 
@@ -67,10 +63,6 @@ function buildCandidate(
   addPhones: { raw: string; normalized: string }[],
   removeNormalized: Set<string>
 ): NormalizedContact {
-  const nationalId =
-    input.nationalId !== undefined
-      ? trimOrNull(input.nationalId)
-      : current.nationalId;
   const fullname =
     input.fullname !== undefined ? trimOrNull(input.fullname) : current.fullname;
   const phones: { raw: string; normalized: string }[] = [];
@@ -88,11 +80,9 @@ function buildCandidate(
   }
   return {
     raw: {
-      id: nationalId,
       fullname,
       phone: phones.map((p) => p.raw),
     },
-    nationalId,
     fullname,
     phones,
   };
@@ -101,7 +91,6 @@ function buildCandidate(
 function summarize(p: PersonWithPhones) {
   return {
     id: p.id,
-    nationalId: p.nationalId,
     fullname: p.fullname,
     phones: p.phones,
   };
@@ -115,65 +104,25 @@ function fieldEqualsCaseInsensitive(
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-// Only ID and phone collisions block a save. A name-only collision is
-// silent everywhere now — the modal that surfaces this conflict to the
-// user is going to point at the field whose unique constraint is being
-// violated, and that field is always nationalId or a phone.
+// Only phone collisions block a save — `other` always shares one of the
+// candidate's phones (that's how it was found). A name-only collision is
+// silent everywhere now. The modal points at the phone being violated, and
+// distinguishes whether the two records also disagree on name.
 function describeConflict(
   other: PersonWithPhones,
   candidate: NormalizedContact,
-  candidatePhoneNormalized: Set<string>,
-  otherPhoneNormalized: Set<string>
+  candidatePhoneNormalized: Set<string>
 ): ConflictDetail {
-  const idMatches =
-    !!candidate.nationalId &&
-    !!other.nationalId &&
-    candidate.nationalId === other.nationalId;
-  const nameMatches = fieldEqualsCaseInsensitive(
-    candidate.fullname,
-    other.fullname
-  );
-  const phoneMatches = [...candidatePhoneNormalized].some((n) =>
-    otherPhoneNormalized.has(n)
-  );
-
-  const mismatchedFields: MismatchedField[] = [];
-  if (
-    candidate.fullname &&
-    other.fullname &&
-    !fieldEqualsCaseInsensitive(candidate.fullname, other.fullname)
-  ) {
-    mismatchedFields.push("name");
-  }
-  if (candidatePhoneNormalized.size > 0 && otherPhoneNormalized.size > 0) {
-    const allOverlap = [...candidatePhoneNormalized].every((n) =>
-      otherPhoneNormalized.has(n)
-    );
-    if (!allOverlap && phoneMatches === false) mismatchedFields.push("phone");
-  }
-
-  let kind: AlertKind;
-  let collidingValue: string | null = null;
-  if (idMatches) {
-    kind = "name_mismatch_on_id";
-    collidingValue = candidate.nationalId;
-  } else if (phoneMatches && nameMatches) {
-    kind = "id_mismatch_name_phone_match";
-    collidingValue = sharedPhoneRaw(other, candidatePhoneNormalized);
-  } else if (phoneMatches) {
-    kind = "phone_match_name_differs_no_id";
-    collidingValue = sharedPhoneRaw(other, candidatePhoneNormalized);
-  } else {
-    // No id match and no phone match means this candidate just shares a
-    // name with `other` — not a blocking collision.
-    kind = "cross_person_mismatch";
-  }
+  const namesDiffer =
+    !!candidate.fullname &&
+    !!other.fullname &&
+    !fieldEqualsCaseInsensitive(candidate.fullname, other.fullname);
 
   return {
-    kind,
+    kind: namesDiffer ? "phone_match_name_differs" : "cross_person_mismatch",
     otherPerson: summarize(other),
-    mismatchedFields,
-    collidingValue,
+    mismatchedFields: namesDiffer ? ["name"] : [],
+    collidingValue: sharedPhoneRaw(other, candidatePhoneNormalized),
   };
 }
 
@@ -240,14 +189,9 @@ async function closeResolvedAlerts(
       const otherPhonesNormalized = new Set(
         other.phones.map((raw) => normalizePhone(raw))
       );
-      const idMatches =
-        !!person.nationalId &&
-        !!other.nationalId &&
-        person.nationalId === other.nationalId;
-      const phoneOverlap = [...personNormalized].some((n) =>
+      stillColliding = [...personNormalized].some((n) =>
         otherPhonesNormalized.has(n)
       );
-      stillColliding = idMatches || phoneOverlap;
     }
 
     if (!stillColliding) {
@@ -301,39 +245,28 @@ export async function updatePerson(
   );
 
   // Re-check against the whole DB on every save: any other person who
-  // shares the candidate's nationalId or any candidate phone is a blocker.
-  // Names are NOT a uniqueness-bearing field — a coordinator may share a
-  // name with another citizen and that's fine.
-  const byId = candidate.nationalId
-    ? await repo.findOtherByNationalId(candidate.nationalId, current.id)
-    : [];
-  const byPhone =
+  // already owns one of the candidate's phones is a blocker. Names are NOT
+  // a uniqueness-bearing field — a coordinator may share a name with
+  // another citizen and that's fine.
+  const others =
     candidate.phones.length > 0
-      ? await repo.findOtherByPhoneNumbers(
-          candidate.phones.map((p) => p.normalized),
-          current.id
+      ? dedupeById(
+          (
+            await repo.findOtherByPhoneNumbers(
+              candidate.phones.map((p) => p.normalized),
+              current.id
+            )
+          ).filter((c) => c.id !== current.id)
         )
       : [];
-
-  const others = dedupeById(
-    [...byId, ...byPhone].filter((c) => c.id !== current.id)
-  );
 
   if (others.length > 0) {
     const candidatePhoneNormalized = new Set(
       candidate.phones.map((p) => p.normalized)
     );
-    const conflicts = others.map((other) => {
-      const otherPhoneNormalized = new Set(
-        other.phones.map((raw) => normalizePhone(raw))
-      );
-      return describeConflict(
-        other,
-        candidate,
-        candidatePhoneNormalized,
-        otherPhoneNormalized
-      );
-    });
+    const conflicts = others.map((other) =>
+      describeConflict(other, candidate, candidatePhoneNormalized)
+    );
     return { ok: false, conflicts };
   }
 
@@ -342,7 +275,6 @@ export async function updatePerson(
     personId: string;
     userId: string;
     field:
-      | "nationalId"
       | "fullname"
       | "phone_added"
       | "phone_removed"
@@ -353,19 +285,6 @@ export async function updatePerson(
     reason: string | null;
   }[] = [];
 
-  if (
-    input.nationalId !== undefined &&
-    (current.nationalId ?? null) !== candidate.nationalId
-  ) {
-    auditRows.push({
-      personId: current.id,
-      userId,
-      field: "nationalId",
-      oldValue: current.nationalId,
-      newValue: candidate.nationalId,
-      reason,
-    });
-  }
   if (
     input.fullname !== undefined &&
     (current.fullname ?? null) !== candidate.fullname
@@ -380,13 +299,8 @@ export async function updatePerson(
     });
   }
 
-  if (input.nationalId !== undefined || input.fullname !== undefined) {
-    await repo.updatePersonFields(current.id, {
-      ...(input.nationalId !== undefined
-        ? { nationalId: candidate.nationalId }
-        : {}),
-      ...(input.fullname !== undefined ? { fullname: candidate.fullname } : {}),
-    });
+  if (input.fullname !== undefined) {
+    await repo.updatePersonFields(current.id, { fullname: candidate.fullname });
   }
 
   const currentNormalizedSet = new Set(currentNormalizedByRaw.values());
