@@ -36,6 +36,7 @@ export type EntryView = {
     otherPageId: string;
     otherPageNumber: number;
     otherCreatedByUsername: string;
+    otherCreatedByActive: boolean;
     alertKind: string;
   }[];
 };
@@ -175,6 +176,7 @@ export function makeService(repo: Repo = defaultRepo) {
             otherPageId: assignment.contactPageId,
             otherPageNumber: assignment.pageNumber,
             otherCreatedByUsername: assignment.createdByUsername,
+            otherCreatedByActive: assignment.createdByActive,
             alertKind: a.kind,
           });
         }
@@ -236,6 +238,7 @@ export function makeService(repo: Repo = defaultRepo) {
     season: string;
     createdByUserId: string;
     createdByUsername: string;
+    createdByActive: boolean;
   } | null> {
     return repo.findContactPageForPerson(personId);
   }

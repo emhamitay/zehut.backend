@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import { db as defaultDb, type Database } from "../db/client";
 import { users, type UserRow } from "../db/schema";
 
@@ -9,6 +9,14 @@ export function makeUserRepo(database: Database = defaultDb) {
     const [row] = await database
       .select({ n: sql<number>`count(*)::int` })
       .from(users);
+    return row?.n ?? 0;
+  }
+
+  async function countActive(): Promise<number> {
+    const [row] = await database
+      .select({ n: sql<number>`count(*)::int` })
+      .from(users)
+      .where(eq(users.active, true));
     return row?.n ?? 0;
   }
 
@@ -45,7 +53,33 @@ export function makeUserRepo(database: Database = defaultDb) {
   }
 
   async function list(): Promise<UserRow[]> {
-    return database.select().from(users);
+    return database.select().from(users).where(eq(users.active, true));
+  }
+
+  // Usernames equal to `base` or of the form `base#<suffix>`. Used to pick the
+  // next free suffix when deactivating. Escapes LIKE wildcards in `base` so a
+  // username containing % or _ can't widen the match.
+  async function findUsernamesByBase(base: string): Promise<string[]> {
+    const escaped = base.replace(/([\\%_])/g, "\\$1");
+    const rows = await database
+      .select({ username: users.username })
+      .from(users)
+      .where(
+        or(
+          eq(users.username, base),
+          sql`${users.username} like ${`${escaped}#%`} escape '\\'`
+        )
+      );
+    return rows.map((r) => r.username);
+  }
+
+  async function deactivate(id: string, newUsername: string): Promise<UserRow> {
+    const [row] = await database
+      .update(users)
+      .set({ active: false, deactivatedAt: new Date(), username: newUsername })
+      .where(eq(users.id, id))
+      .returning();
+    return row;
   }
 
   async function deleteById(id: string): Promise<void> {
@@ -54,10 +88,13 @@ export function makeUserRepo(database: Database = defaultDb) {
 
   return {
     count,
+    countActive,
     insert,
     findByUsername,
     findById,
+    findUsernamesByBase,
     list,
+    deactivate,
     delete: deleteById,
   };
 }

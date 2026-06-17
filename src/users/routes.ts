@@ -24,6 +24,14 @@ export function usersRoutes(users: UserService, auth: AuthService) {
         body: CredentialsSchema,
       }
     )
+    .post("/:id/deactivate", async ({ params, set }) => {
+      try {
+        return { ok: true, user: await users.deactivate(params.id) };
+      } catch (e) {
+        set.status = 400;
+        return { error: (e as Error).message };
+      }
+    })
     .delete("/:id", async ({ params, set }) => {
       try {
         await users.remove(params.id);
