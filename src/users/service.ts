@@ -58,16 +58,49 @@ export function makeUserService(repo: UserRepo) {
   ): Promise<PublicUser | null> {
     const row = await repo.findByUsername(normalizeUsername(username));
     if (!row) return null;
+    // Deactivated accounts cannot log in, even with the renamed username#N.
+    if (!row.active) return null;
     const ok = await Bun.password.verify(password, row.passwordHash);
     if (!ok) return null;
     return toPublic(row);
   }
 
   async function remove(id: string): Promise<void> {
-    const total = await repo.count();
-    if (total <= 1) throw new Error("cannot delete the last user");
+    const target = await repo.findById(id);
+    if (!target) throw new Error("user not found");
+    // Removing an inactive user is always fine, but we must never leave the
+    // system without an active user able to log in.
+    if (target.active && (await repo.countActive()) <= 1) {
+      throw new Error("cannot delete the last active user");
+    }
     await repo.delete(id);
   }
 
-  return { create, list, count, findById, verifyCredentials, remove };
+  // Soft-disable: keep the account and the contact pages it created, but free
+  // the username by renaming to `username#1` (`#2`, `#3`… if already taken) and
+  // block login. The base username becomes available for a new user.
+  async function deactivate(id: string): Promise<PublicUser> {
+    const target = await repo.findById(id);
+    if (!target) throw new Error("user not found");
+    if (!target.active) throw new Error("user already inactive");
+    if ((await repo.countActive()) <= 1) {
+      throw new Error("cannot deactivate the last active user");
+    }
+    const base = target.username;
+    const taken = new Set(await repo.findUsernamesByBase(base));
+    let k = 1;
+    while (taken.has(`${base}#${k}`)) k++;
+    const row = await repo.deactivate(id, `${base}#${k}`);
+    return toPublic(row);
+  }
+
+  return {
+    create,
+    list,
+    count,
+    findById,
+    verifyCredentials,
+    remove,
+    deactivate,
+  };
 }

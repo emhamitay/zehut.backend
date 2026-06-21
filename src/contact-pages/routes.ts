@@ -15,6 +15,7 @@ const EntryViewSchema = t.Object({
       otherPageId: t.String(),
       otherPageNumber: t.Number(),
       otherCreatedByUsername: t.String(),
+      otherCreatedByActive: t.Boolean(),
       alertKind: t.String(),
     })
   ),

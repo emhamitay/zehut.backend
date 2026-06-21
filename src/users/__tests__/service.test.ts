@@ -111,13 +111,61 @@ describe("user service", () => {
     expect(users.map((u) => u.username)).toEqual(["bob"]);
   });
 
-  test("remove refuses to delete the last user", async () => {
+  test("remove refuses to delete the last active user", async () => {
     const svc = service(tdb);
     const a = await svc.create({
       username: "alice",
       password: "secret-pass-123",
     });
-    await expect(svc.remove(a.id)).rejects.toThrow(/last user/i);
+    await expect(svc.remove(a.id)).rejects.toThrow(/last active user/i);
+  });
+
+  test("verifyCredentials returns null for a deactivated user", async () => {
+    const svc = service(tdb);
+    await svc.create({ username: "alice", password: "secret-pass-123" });
+    const bob = await svc.create({ username: "bob", password: "secret-pass-123" });
+    await svc.deactivate(bob.id);
+    expect(await svc.verifyCredentials("bob", "secret-pass-123")).toBeNull();
+  });
+
+  test("list hides deactivated users", async () => {
+    const svc = service(tdb);
+    await svc.create({ username: "alice", password: "secret-pass-123" });
+    const bob = await svc.create({ username: "bob", password: "secret-pass-123" });
+    await svc.deactivate(bob.id);
+    expect((await svc.list()).map((u) => u.username)).toEqual(["alice"]);
+  });
+
+  test("deactivate renames to username#1, then #2 when taken", async () => {
+    const svc = service(tdb);
+    await svc.create({ username: "alice", password: "secret-pass-123" });
+    const bob1 = await svc.create({ username: "bob", password: "secret-pass-123" });
+    const d1 = await svc.deactivate(bob1.id);
+    expect(d1.username).toBe("bob#1");
+
+    // The base name is free again; reuse it, then deactivate once more.
+    const bob2 = await svc.create({ username: "bob", password: "secret-pass-123" });
+    const d2 = await svc.deactivate(bob2.id);
+    expect(d2.username).toBe("bob#2");
+  });
+
+  test("deactivate refuses the last active user", async () => {
+    const svc = service(tdb);
+    const a = await svc.create({
+      username: "alice",
+      password: "secret-pass-123",
+    });
+    await expect(svc.deactivate(a.id)).rejects.toThrow(/last active user/i);
+  });
+
+  test("remove can delete an inactive user while one active remains", async () => {
+    const svc = service(tdb);
+    await svc.create({ username: "alice", password: "secret-pass-123" });
+    const bob = await svc.create({ username: "bob", password: "secret-pass-123" });
+    const d = await svc.deactivate(bob.id);
+    await svc.remove(bob.id);
+    expect((await svc.list()).map((u) => u.username)).toEqual(["alice"]);
+    expect(d.username).toBe("bob#1");
   });
 
   test("count returns user count", async () => {

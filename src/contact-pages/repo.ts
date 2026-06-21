@@ -21,6 +21,7 @@ export type AssignmentRow = {
   pageNumber: number;
   createdByUserId: string;
   createdByUsername: string;
+  createdByActive: boolean;
 };
 
 export function makeRepo(database: Database = defaultDb) {
@@ -102,6 +103,7 @@ export function makeRepo(database: Database = defaultDb) {
         pageNumber: contactPages.pageNumber,
         createdByUserId: contactPages.createdByUserId,
         createdByUsername: users.username,
+        createdByActive: users.active,
       })
       .from(contactPageEntries)
       .innerJoin(contactPages, eq(contactPageEntries.contactPageId, contactPages.id))
@@ -202,6 +204,7 @@ export function makeRepo(database: Database = defaultDb) {
     season: string;
     createdByUserId: string;
     createdByUsername: string;
+    createdByActive: boolean;
   } | null> {
     const [row] = await database
       .select({
@@ -210,6 +213,7 @@ export function makeRepo(database: Database = defaultDb) {
         season: contactPages.season,
         createdByUserId: contactPages.createdByUserId,
         createdByUsername: users.username,
+        createdByActive: users.active,
       })
       .from(contactPageEntries)
       .innerJoin(contactPages, eq(contactPageEntries.contactPageId, contactPages.id))

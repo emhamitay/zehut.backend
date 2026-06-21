@@ -179,6 +179,7 @@ export const ContactPageInfoSchema = t.Union([
     season: t.String(),
     createdByUserId: t.String(),
     createdByUsername: t.String(),
+    createdByActive: t.Boolean(),
   }),
   t.Null(),
 ]);
